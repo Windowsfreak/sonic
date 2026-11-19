@@ -585,9 +585,191 @@
     };
   }
 
+  function computePeriodDates(timeZone = 'Europe/Berlin') {
+    let todayStr = '';
+    if (typeof globalThis.Temporal !== 'undefined' && globalThis.Temporal.Now) {
+      const pd = globalThis.Temporal.Now.plainDateISO(timeZone);
+      const yest = pd.subtract({ days: 1 });
+      const weekStart = pd.subtract({ days: pd.dayOfWeek - 1 });
+      const lastWeekEnd = weekStart.subtract({ days: 1 });
+      const lastWeekStart = weekStart.subtract({ days: 7 });
+      const monthStart = pd.with({ day: 1 });
+      const lastMonthEnd = monthStart.subtract({ days: 1 });
+      const lastMonthStart = lastMonthEnd.with({ day: 1 });
+      const yearStart = pd.with({ month: 1, day: 1 });
+      return {
+        today: { key: 'today', from: pd.toString(), to: pd.toString() },
+        yesterday: { key: 'yesterday', from: yest.toString(), to: yest.toString() },
+        week: { key: 'week', from: weekStart.toString(), to: pd.toString() },
+        last_week: { key: 'last_week', from: lastWeekStart.toString(), to: lastWeekEnd.toString() },
+        month: { key: 'month', from: monthStart.toString(), to: pd.toString() },
+        last_month: { key: 'last_month', from: lastMonthStart.toString(), to: lastMonthEnd.toString() },
+        year: { key: 'year', from: yearStart.toString(), to: pd.toString() }
+      };
+    }
+
+    try {
+      todayStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+    } catch (e) {
+      todayStr = new Date().toISOString().slice(0, 10);
+    }
+
+    const parts = todayStr.split('-').map(n => parseInt(n, 10));
+    const utcNow = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    const addDays = (d, delta) => {
+      const copy = new Date(d.getTime());
+      copy.setUTCDate(copy.getUTCDate() + delta);
+      return copy;
+    };
+
+    const yest = addDays(utcNow, -1);
+    const dow = utcNow.getUTCDay() === 0 ? 7 : utcNow.getUTCDay();
+    const weekStart = addDays(utcNow, -(dow - 1));
+    const lastWeekEnd = addDays(weekStart, -1);
+    const lastWeekStart = addDays(weekStart, -7);
+    const monthStart = new Date(Date.UTC(parts[0], parts[1] - 1, 1));
+    const lastMonthEnd = addDays(monthStart, -1);
+    const lastMonthStart = new Date(Date.UTC(lastMonthEnd.getUTCFullYear(), lastMonthEnd.getUTCMonth(), 1));
+    const yearStart = new Date(Date.UTC(parts[0], 0, 1));
+
+    return {
+      today: { key: 'today', from: fmt(utcNow), to: fmt(utcNow) },
+      yesterday: { key: 'yesterday', from: fmt(yest), to: fmt(yest) },
+      week: { key: 'week', from: fmt(weekStart), to: fmt(utcNow) },
+      last_week: { key: 'last_week', from: fmt(lastWeekStart), to: fmt(lastWeekEnd) },
+      month: { key: 'month', from: fmt(monthStart), to: fmt(utcNow) },
+      last_month: { key: 'last_month', from: fmt(lastMonthStart), to: fmt(lastMonthEnd) },
+      year: { key: 'year', from: fmt(yearStart), to: fmt(utcNow) }
+    };
+  }
+
+  /**
+   * Compute period summaries (Today, Yesterday, This Week, Last Week, This Month, Last Month, This Year)
+   * with amplification (1x/12x/24x), 30% performance fee, and compounding scheme applied.
+   */
+  function computePeriodMetrics(rawGrowth, rawLots, trades, opts = {}) {
+    if (!rawGrowth || rawGrowth.length < 2) {
+      return null;
+    }
+
+    const baseCapital = Math.max(100, Number(opts.capital) || 10000);
+    const amp = Math.max(1, Number(opts.amplify) || 24);
+    const reinvestMode = opts.reinvestMode || 'daily';
+    const masterBalance = Math.max(1, Number(opts.masterBalance) || 140628);
+    const simFromDate = opts.simFromDate || null;
+    const isLinear = reinvestMode === 'none';
+
+    const ranges = computePeriodDates(opts.timeZone || 'Europe/Berlin');
+    const primarySim = simulate(rawGrowth, rawLots, baseCapital, amp, reinvestMode, simFromDate, null, null);
+    if (!primarySim || !primarySim.timeline || primarySim.timeline.length === 0) {
+      return null;
+    }
+
+    const timelineStart = primarySim.timeline[0].date;
+    let earliestNeeded = ranges.year.from;
+    if (ranges.last_month.from < earliestNeeded) earliestNeeded = ranges.last_month.from;
+    if (ranges.last_week.from < earliestNeeded) earliestNeeded = ranges.last_week.from;
+
+    let extendedSim = primarySim;
+    if (!simFromDate || timelineStart > earliestNeeded) {
+      const fullStartIdx = rawGrowth.findIndex(p => p.date >= earliestNeeded);
+      const anchorIdx = fullStartIdx > 0 ? fullStartIdx - 1 : 0;
+      const anchorDate = rawGrowth[anchorIdx] ? rawGrowth[anchorIdx].date : null;
+      extendedSim = simulate(rawGrowth, rawLots, baseCapital, amp, reinvestMode, anchorDate, null, null) || primarySim;
+    }
+
+    const equityField = isLinear ? 'linearBalance' : 'compBalance';
+
+    const evalRangeFromTimeline = (simObj, fromIso, toIso) => {
+      const tl = simObj.timeline;
+      if (!tl || tl.length === 0) {
+        return { gain_pct: 0, profit: 0, startEquity: baseCapital };
+      }
+
+      let hasPointInRange = false;
+      let prevEquity = simObj.baseCapital;
+      let endEquity = null;
+
+      for (let i = 0; i < tl.length; i++) {
+        const pt = tl[i];
+        if (pt.date < fromIso) {
+          prevEquity = pt[equityField];
+        } else if (pt.date <= toIso) {
+          hasPointInRange = true;
+          endEquity = pt[equityField];
+        } else {
+          break;
+        }
+      }
+
+      if (!hasPointInRange || endEquity === null) {
+        return { gain_pct: 0, profit: 0, startEquity: prevEquity };
+      }
+
+      const profit = endEquity - prevEquity;
+      const gainPct = isLinear
+        ? (profit / simObj.baseCapital) * 100
+        : (prevEquity > 0 ? ((endEquity / prevEquity) - 1) * 100 : 0);
+
+      return {
+        gain_pct: Math.round(gainPct * 100) / 100,
+        profit: Math.round(profit * 100) / 100,
+        startEquity: prevEquity
+      };
+    };
+
+    const result = {};
+    const orderedKeys = ['today', 'yesterday', 'week', 'last_week', 'month', 'last_month', 'year'];
+    const allTrades = Array.isArray(trades) ? trades : [];
+
+    orderedKeys.forEach((k) => {
+      const r = ranges[k];
+      const useSim = (primarySim.timeline[0].date <= r.from) ? primarySim : extendedSim;
+      const fin = evalRangeFromTimeline(useSim, r.from, r.to);
+
+      let count = 0;
+      let wins = 0;
+      let pips = 0;
+      let masterLots = 0;
+
+      for (let i = 0; i < allTrades.length; i++) {
+        const t = allTrades[i];
+        const d = tradeDateIso(t);
+        if (d && d >= r.from && d <= r.to) {
+          count++;
+          if ((Number(t.profit) || 0) > 0) wins++;
+          pips += Number(t.pips) || 0;
+          masterLots += Number(t.lots) || 0;
+        }
+      }
+
+      const scaledLots = masterLots * (fin.startEquity / masterBalance) * amp;
+
+      result[k] = {
+        from: r.from,
+        to: r.to,
+        gain_pct: fin.gain_pct,
+        profit: fin.profit,
+        pips: Math.round(pips * 10) / 10,
+        win_rate_pct: count > 0 ? Math.round((wins / count) * 1000) / 10 : 0,
+        trades: count,
+        lots: Math.round(scaledLots * 100) / 100
+      };
+    });
+
+    return result;
+  }
+
   const Calculator = {
     simulate,
     computeTradeMetrics,
+    computePeriodMetrics,
     AVG_COMMISSION_PER_LOT,
     BASE_LOTS_PER_1K_EQUITY,
     PERFORMANCE_FEE_RATE,

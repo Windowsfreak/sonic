@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -50,7 +51,7 @@ func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
 		w.Header().Add("Vary", "Access-Control-Request-Headers")
 	} else {
-		w.Header().Set("Access-Control-Allow-Headers", "*, Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "*, Authorization, Content-Type, X-API-Key")
 	}
 	w.Header().Set("Access-Control-Max-Age", "86400")
 }
@@ -64,6 +65,7 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/api/sonic/calendar", s.handleCalendar)
 	s.router.GET("/api/sonic/streaks", s.handleStreaks)
 	s.router.POST("/api/sonic/update", s.handleUpdate)
+	s.router.POST("/api/sonic/webhook/trades", s.handleWebhookTrades)
 	s.router.GET("/api/zooms", s.handleZooms)
 
 	// Static files & pages
@@ -98,6 +100,9 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request, _ httprou
 		"general":             data.General,
 		"periods":             data.Periods,
 		"monthly_gain":        data.MonthlyGain,
+	}
+	if !data.LastWebhookUTC.IsZero() {
+		resp["last_webhook_utc"] = data.LastWebhookUTC
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
@@ -286,6 +291,93 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request, _ httprout
 	}
 
 	s.writeJSON(w, httpStatus, resp)
+}
+
+func extractBearerOrHeaderKey(r *http.Request) string {
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+		if len(auth) >= 7 && strings.EqualFold(auth[:7], "Bearer ") {
+			return strings.TrimSpace(auth[7:])
+		}
+		return auth
+	}
+	if key := strings.TrimSpace(r.Header.Get("X-API-Key")); key != "" {
+		return key
+	}
+	return ""
+}
+
+func parseWebhookPayload(raw []byte) ([]models.WebhookTradeInput, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return nil, http.ErrBodyNotAllowed
+	}
+
+	if strings.HasPrefix(trimmed, "[") {
+		var list []models.WebhookTradeInput
+		if err := json.Unmarshal([]byte(trimmed), &list); err != nil {
+			return nil, err
+		}
+		return list, nil
+	}
+
+	var envelope models.WebhookTradesPayload
+	if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil {
+		return nil, err
+	}
+	if len(envelope.Trades) > 0 {
+		return envelope.Trades, nil
+	}
+	if envelope.Trade != nil {
+		return []models.WebhookTradeInput{*envelope.Trade}, nil
+	}
+
+	var single models.WebhookTradeInput
+	if err := json.Unmarshal([]byte(trimmed), &single); err != nil {
+		return nil, err
+	}
+	if single.Open != "" || single.Close != "" || single.Symbol != "" || single.Action != "" {
+		return []models.WebhookTradeInput{single}, nil
+	}
+	return nil, nil
+}
+
+func (s *Server) handleWebhookTrades(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	expectedKey := s.cacheMgr.WebhookAPIKey()
+	if expectedKey == "" {
+		s.writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "webhook API key is not configured (set SONIC_WEBHOOK_API_KEY)",
+		})
+		return
+	}
+
+	providedKey := extractBearerOrHeaderKey(r)
+	if providedKey == "" || subtle.ConstantTimeCompare([]byte(providedKey), []byte(expectedKey)) != 1 {
+		s.writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing API key"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+	defer r.Body.Close()
+	dec := json.NewDecoder(r.Body)
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+
+	inputs, err := parseWebhookPayload(raw)
+	if err != nil || len(inputs) == 0 {
+		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected trades array or trade object"})
+		return
+	}
+
+	resp, err := s.cacheMgr.IngestWebhookTrades(inputs)
+	if err != nil {
+		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleStaticOrSPA(w http.ResponseWriter, r *http.Request) {

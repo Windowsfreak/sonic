@@ -115,6 +115,7 @@
 
     // Tables & Infinite scroll
     el.periodsBody = document.querySelector('#periods-table tbody');
+    el.periodsDesc = document.getElementById('periods-section-desc');
     el.tradesBody = document.querySelector('#trades-table tbody');
     el.tradesPager = document.getElementById('trades-pager');
     el.tradesCountBadge = document.getElementById('trades-count-badge');
@@ -616,6 +617,9 @@
       mode: state.displayMode
     });
 
+    // Update simulated Periods Table dynamically with current capital, leverage, fees & reinvest scheme
+    renderPeriodsTable();
+
     // Render Deep Trading & Risk Metrics dynamically!
     if (window.SonicCalculator && window.SonicCalculator.computeTradeMetrics && state.allTrades && state.allTrades.length > 0) {
       const metricsFilterDate = (currentStep && currentStep.id !== 'max') ? currentStep.fromDate : null;
@@ -769,25 +773,71 @@
   }
 
   function renderPeriodsTable() {
-    if (!state.summary || !state.summary.periods || !el.periodsBody) return;
-    const p = state.summary.periods;
+    if (!el.periodsBody) return;
     const tr = (k) => (window.i18n && window.i18n.t ? window.i18n.t(k) : k);
 
-    const rows = [
-      { name: tr('Heute'), data: p.today },
-      { name: tr('Diese Woche'), data: p.week },
-      { name: tr('Dieser Monat'), data: p.month },
-      { name: tr('Dieses Jahr'), data: p.year }
-    ];
+    const rawGrowth = state.growthData && Array.isArray(state.growthData.growth) ? state.growthData.growth : null;
+    const rawLots = state.growthData && state.growthData.lots ? state.growthData.lots : {};
+    const masterBalance = state.summary && state.summary.general && Number(state.summary.general.balance) > 0
+      ? Number(state.summary.general.balance)
+      : 140628;
+    const currentStep = state.sampleSteps && state.sampleIndex !== null ? state.sampleSteps[state.sampleIndex] : null;
+    const simFromDate = (currentStep && currentStep.id !== 'max') ? currentStep.fromDate : null;
+
+    let computed = null;
+    if (rawGrowth && rawGrowth.length >= 2 && window.SonicCalculator && window.SonicCalculator.computePeriodMetrics) {
+      computed = window.SonicCalculator.computePeriodMetrics(rawGrowth, rawLots, state.allTrades || [], {
+        capital: state.balance,
+        amplify: state.amplify,
+        reinvestMode: state.reinvestMode,
+        masterBalance,
+        simFromDate,
+        timeZone: 'Europe/Berlin'
+      });
+    }
+
+    if (el.periodsDesc) {
+      if (computed) {
+        const modeLabel = state.reinvestMode === 'daily' ? tr('Tägliche Reinvestition')
+          : state.reinvestMode === 'weekly' ? tr('Wöchentliche Reinvestition')
+          : state.reinvestMode === 'monthly' ? tr('Monatliche Reinvestition')
+          : tr('Keine Reinvestition (Linear)');
+        el.periodsDesc.textContent = `${fmtCurrency(state.balance)} · ${state.amplify}x ${tr('Hebel')} · ${modeLabel} · ${tr('inkl. 30% Perf. Fee')}`;
+      } else {
+        el.periodsDesc.textContent = tr('Ergebnisse des Master-Kontos (ungehebelt) als rechnerische Basis für die Hochrechnung.');
+      }
+    }
+
+    const fallback = (state.summary && state.summary.periods) || {};
+    const p = computed || fallback;
+    if (!p || (!p.today && !p.week && !p.month && !p.year)) return;
+
+    const rows = computed
+      ? [
+          { name: tr('Heute'), data: p.today },
+          { name: tr('Gestern'), data: p.yesterday },
+          { name: tr('Diese Woche'), data: p.week },
+          { name: tr('Letzte Woche'), data: p.last_week },
+          { name: tr('Dieser Monat'), data: p.month },
+          { name: tr('Letzter Monat'), data: p.last_month },
+          { name: tr('Dieses Jahr'), data: p.year }
+        ]
+      : [
+          { name: tr('Heute'), data: p.today },
+          { name: tr('Diese Woche'), data: p.week },
+          { name: tr('Dieser Monat'), data: p.month },
+          { name: tr('Dieses Jahr'), data: p.year }
+        ];
 
     el.periodsBody.innerHTML = '';
     rows.forEach(r => {
-      const tr = document.createElement('tr');
+      const rowEl = document.createElement('tr');
       const d = r.data || {};
       const gainCls = (d.gain_pct || 0) >= 0 ? 'pos' : 'neg';
       const profCls = (d.profit || 0) >= 0 ? 'pos' : 'neg';
-      tr.innerHTML = `
-        <td class="tbl-period-name"><strong>${r.name}</strong></td>
+      const rangeTitle = d.from && d.to ? (d.from === d.to ? d.from : `${d.from} – ${d.to}`) : '';
+      rowEl.innerHTML = `
+        <td class="tbl-period-name" title="${rangeTitle}"><strong>${r.name}</strong></td>
         <td class="${gainCls} font-tabular">${fmtGainPct(d.gain_pct)}</td>
         <td class="${profCls} font-tabular">${fmtCurrency(d.profit)}</td>
         <td class="font-tabular">${fmtSignedPips(d.pips)}</td>
@@ -795,7 +845,7 @@
         <td class="font-tabular">${typeof d.trades === 'number' ? d.trades : '-'}</td>
         <td class="font-tabular">${fmtLots(d.lots)}</td>
       `;
-      el.periodsBody.appendChild(tr);
+      el.periodsBody.appendChild(rowEl);
     });
   }
 
@@ -882,7 +932,9 @@
         const ddPips = typeof t.analytics.drawdown_pips === 'number' ? `${t.analytics.drawdown_pips} pips` : '-';
         const mae = typeof t.analytics.min_usd === 'number' ? `${t.analytics.min_usd < 0 ? '-' : ''}$${Math.abs(t.analytics.min_usd).toFixed(2)}` : '-';
         const mfe = typeof t.analytics.max_usd === 'number' ? `+$${t.analytics.max_usd.toFixed(2)}` : '-';
-        const timeProf = t.analytics.time_profitable_pct ? `${t.analytics.time_profitable_pct}% (${t.analytics.time_profitable_duration || ''})` : '-';
+        const timeProf = typeof t.analytics.time_profitable_pct === 'number'
+          ? (t.analytics.time_profitable_duration ? `${t.analytics.time_profitable_pct}% (${t.analytics.time_profitable_duration})` : `${t.analytics.time_profitable_pct}%`)
+          : '-';
         const rr = t.analytics.risk_reward || '-';
 
         analyticsHtml = `
@@ -909,13 +961,18 @@
         `;
       }
 
+      const isProvisional = Boolean(t.provisional || t.source === 'webhook');
+      const provBadge = isProvisional
+        ? `<span title="${trText('Vorläufiger MT5-Webhook-Wert (wird beim nächsten Myfxbook-Sync ersetzt)')}" style="color: var(--text-muted); font-size: 11px; margin-left: 3px;">~</span>`
+        : '';
+
       tr.innerHTML = `
-        <td><span class="badge ${isBuy ? 'badge-buy' : 'badge-sell'}">${t.action}</span> <strong>${t.symbol}</strong></td>
-        <td class="font-tabular">${fmtLots(t.lots)}</td>
+        <td><span class="badge ${isBuy ? 'badge-buy' : 'badge-sell'}">${t.action}</span> <strong>${t.symbol}</strong>${provBadge}</td>
+        <td class="font-tabular">${isProvisional ? '~' : ''}${fmtLots(t.lots)}</td>
         <td class="font-tabular">${fmtPrice(t.open_price)}</td>
         <td class="font-tabular">${fmtPrice(t.close_price)}</td>
         <td class="font-tabular ${isProfit ? 'pos' : 'neg'}">${typeof t.pips === 'number' ? t.pips.toFixed(1) : '-'}</td>
-        <td class="font-tabular ${isProfit ? 'pos' : 'neg'}"><strong>${fmtCurrency(t.profit)}</strong></td>
+        <td class="font-tabular ${isProfit ? 'pos' : 'neg'}"><strong>${isProvisional ? '~' : ''}${fmtCurrency(t.profit)}</strong></td>
         <td class="font-tabular">${fmtDuration(t.duration_seconds)}</td>
         <td class="sparkline-cell">${analyticsHtml}</td>
         <td class="tbl-time">${formatTradeDate(t.open)}</td>

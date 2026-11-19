@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,6 +216,80 @@ func TestCORSAllAPIEndpoints(t *testing.T) {
 		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
 			t.Fatalf("GET %s Access-Control-Allow-Origin = %q, want *", path, got)
 		}
+	}
+}
+
+func TestWebhookTradesAuthAndIngestion(t *testing.T) {
+	srv, _ := newTestServer(t, time.Now().UTC().Add(-2*time.Hour))
+	router := srv.Router()
+
+	payload := `{
+		"konto": "dada_master",
+		"trades": [{
+			"open": "2026-10-16T16:00:10Z",
+			"close": "2026-10-16T16:12:06Z",
+			"symbol": "XAUUSD",
+			"action": "Sell",
+			"lots": 84.19,
+			"open_price": 3866.37,
+			"close_price": 3864.57,
+			"pips": 180,
+			"profit": 14313.34,
+			"gain_pct": 0.0129,
+			"balance_before": 110789010.52,
+			"ticket": "105581675"
+		}]
+	}`
+
+	// 1. Unconfigured key returns 503
+	t.Setenv("SONIC_WEBHOOK_API_KEY", "")
+	t.Setenv("WEBHOOK_API_KEY", "")
+	req503 := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
+	rec503 := httptest.NewRecorder()
+	router.ServeHTTP(rec503, req503)
+	if rec503.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured key status = %d, want 503", rec503.Code)
+	}
+
+	// 2. Invalid/missing key returns 401
+	t.Setenv("SONIC_WEBHOOK_API_KEY", "super-secret-shared-key")
+	req401 := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
+	req401.Header.Set("X-API-Key", "wrong-key")
+	rec401 := httptest.NewRecorder()
+	router.ServeHTTP(rec401, req401)
+	if rec401.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong key status = %d, want 401", rec401.Code)
+	}
+
+	// 3. Valid X-API-Key succeeds
+	reqOK := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
+	reqOK.Header.Set("X-API-Key", "super-secret-shared-key")
+	recOK := httptest.NewRecorder()
+	router.ServeHTTP(recOK, reqOK)
+	if recOK.Code != http.StatusOK {
+		t.Fatalf("valid X-API-Key status = %d, want 200 (body: %s)", recOK.Code, recOK.Body.String())
+	}
+
+	var resp models.WebhookTradesResponse
+	if err := json.Unmarshal(recOK.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal webhook response: %v", err)
+	}
+	if resp.Inserted != 1 || resp.TotalTrades != 5 || resp.ProvisionalTrades != 1 {
+		t.Fatalf("unexpected webhook response: %+v", resp)
+	}
+
+	// 4. Valid Bearer token also works cleanly
+	reqBearer := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
+	reqBearer.Header.Set("Authorization", "Bearer super-secret-shared-key")
+	recBearer := httptest.NewRecorder()
+	router.ServeHTTP(recBearer, reqBearer)
+	if recBearer.Code != http.StatusOK {
+		t.Fatalf("Bearer retry status = %d, want 200", recBearer.Code)
+	}
+	var resp2 models.WebhookTradesResponse
+	_ = json.Unmarshal(recBearer.Body.Bytes(), &resp2)
+	if resp2.SkippedExisting != 1 || resp2.Updated != 0 || resp2.TotalTrades != 5 {
+		t.Fatalf("expected idempotent skip on Bearer retry, got %+v", resp2)
 	}
 }
 

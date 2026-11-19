@@ -229,6 +229,51 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/sonic/webhook/trades:
+    post:
+      tags: [Sync]
+      summary: Ingest provisional MT5 trades via shared API key
+      description: >
+        Accepts a single closed trade or batch (`{ "trades": [...] }`, `{ "trade": {...} }`,
+        or JSON array) authenticated with `SONIC_WEBHOOK_API_KEY` via `Authorization: Bearer <key>`
+        or `X-API-Key: <key>`. Deduplicates against already-scraped Myfxbook trades, scales
+        high-balance master payloads (e.g. `dada_master`) down to the 1x master account, and
+        marks new entries `provisional: true` until overridden by the next Myfxbook scrape.
+      parameters:
+        - name: X-API-Key
+          in: header
+          description: Shared webhook API key (alternative to `Authorization: Bearer <key>`)
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookTradesPayload"
+      responses:
+        "200":
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookTradesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          description: Invalid or missing webhook API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Webhook API key is not configured on the server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/zooms:
     get:
       tags: [Community]
@@ -668,3 +713,53 @@ components:
           items: { $ref: "#/components/schemas/ZoomItem" }
         recurring_call:
           $ref: "#/components/schemas/RecurringZoomCall"
+
+    WebhookTradeInput:
+      type: object
+      required: [open, close, symbol, action]
+      properties:
+        open: { type: string, format: date-time }
+        close: { type: string, format: date-time }
+        symbol: { type: string, example: "XAUUSD" }
+        action: { type: string, enum: [Buy, Sell] }
+        lots: { type: number, example: 84.18208 }
+        open_price: { type: number, example: 3679.16 }
+        close_price: { type: number, example: 3675.17 }
+        pips: { type: number, example: 399 }
+        profit: { type: number, example: 32746.83 }
+        commission: { type: number, example: -841.82 }
+        swap: { type: number, example: 0 }
+        duration_seconds: { type: integer, example: 1256 }
+        gain_pct: { type: number, example: 0.0295 }
+        balance_before: { type: number, example: 110908375.27 }
+        balance_after: { type: number, example: 110941122.1 }
+        leverage_factor: { type: number, example: 24 }
+        ticket: { type: string, example: "105681429" }
+        time_basis: { type: string, example: "broker_server_time" }
+        analytics:
+          type: object
+
+    WebhookTradesPayload:
+      type: object
+      properties:
+        konto: { type: string, example: "dada_master" }
+        anzahl: { type: integer, example: 10 }
+        trades:
+          type: array
+          items: { $ref: "#/components/schemas/WebhookTradeInput" }
+        trade:
+          $ref: "#/components/schemas/WebhookTradeInput"
+
+    WebhookTradesResponse:
+      type: object
+      properties:
+        status: { type: string, example: "ok" }
+        inserted: { type: integer }
+        updated: { type: integer }
+        skipped_existing: { type: integer }
+        ignored: { type: integer }
+        total_trades: { type: integer }
+        provisional_trades: { type: integer }
+        balance: { type: number }
+        gain_pct: { type: number }
+        last_webhook_utc: { type: string, format: date-time }

@@ -329,6 +329,26 @@ function monthToISO(raw) {
 }
 
 const makeTradeKey = (t) => `${t.open}|${t.close}|${t.symbol}|${t.action}|${Number(t.lots || 0).toFixed(2)}|${Number(t.open_price || 0)}|${Number(t.close_price || 0)}`;
+const isProvisionalTrade = (t) => Boolean(t && (t.provisional === true || t.source === 'webhook'));
+const normSymbol = (sym) => {
+    const s = String(sym || '').trim().toUpperCase();
+    const dot = s.lastIndexOf('.');
+    if (dot > 0 && s.length - dot - 1 <= 4) return s.slice(0, dot);
+    return s;
+};
+const isSameUnderlyingTrade = (a, b) => {
+    if (!a || !b) return false;
+    if (normSymbol(a.symbol) !== normSymbol(b.symbol)) return false;
+    if (String(a.action || '').toLowerCase() !== String(b.action || '').toLowerCase()) return false;
+    const openA = Date.parse(a.open || '');
+    const openB = Date.parse(b.open || '');
+    const closeA = Date.parse(a.close || '');
+    const closeB = Date.parse(b.close || '');
+    if (!Number.isFinite(openA) || !Number.isFinite(openB) || !Number.isFinite(closeA) || !Number.isFinite(closeB)) {
+        return false;
+    }
+    return Math.abs(openA - openB) <= 120000 && Math.abs(closeA - closeB) <= 120000;
+};
 
 function isCloudflareTitle(title) {
     if (!title) return false;
@@ -360,7 +380,9 @@ if (fs.existsSync(OUT_FILE)) {
 const existingTradeKeys = new Set();
 if (existing && Array.isArray(existing.trades)) {
     for (const t of existing.trades) {
-        existingTradeKeys.add(makeTradeKey(t));
+        if (!isProvisionalTrade(t)) {
+            existingTradeKeys.add(makeTradeKey(t));
+        }
     }
 }
 
@@ -1313,14 +1335,43 @@ function finalizeAndWriteCache({ providerName, extracted, allTrades, actualCrawl
         normalizedLots[catToISO(k)] = typeof v === 'number' ? v : parseNum(v);
     }
 
-    // Merge newly crawled trades with existing historical trades so all trades accumulate
+    // Re-read cache file just before merging so webhook updates arriving mid-crawl are not lost
+    let latestExisting = existing;
+    if (fs.existsSync(OUT_FILE)) {
+        try {
+            latestExisting = JSON.parse(fs.readFileSync(OUT_FILE, 'utf-8'));
+        } catch (e) {}
+    }
+
+    // Merge newly crawled Myfxbook trades with existing settled history and any unmatched provisional webhook trades
     let mergedTrades = allTrades;
-    if (existing && Array.isArray(existing.trades)) {
+    let keptProvisionalTrades = [];
+    let replacedProvisionalCount = 0;
+    const nowMs = Date.now();
+    if (latestExisting && Array.isArray(latestExisting.trades)) {
         const tradeMap = new Map();
         allTrades.forEach(t => {
             tradeMap.set(makeTradeKey(t), t);
         });
-        existing.trades.forEach(t => {
+        latestExisting.trades.forEach(t => {
+            if (isProvisionalTrade(t)) {
+                const matchedSettled = allTrades.find(m => isSameUnderlyingTrade(m, t));
+                if (matchedSettled) {
+                    replacedProvisionalCount++;
+                    if (!matchedSettled.analytics && t.analytics) {
+                        matchedSettled.analytics = t.analytics;
+                    }
+                    return;
+                }
+                const closeMs = Date.parse(t.close || t.open || '');
+                const ageMs = Number.isFinite(closeMs) ? (nowMs - closeMs) : Infinity;
+                // Retain only recent unmatched provisional trades not yet indexed on Myfxbook
+                if (ageMs <= 72 * 3600 * 1000) {
+                    keptProvisionalTrades.push(t);
+                    tradeMap.set(`prov|${t.ticket || ''}|${makeTradeKey(t)}`, t);
+                }
+                return;
+            }
             const key = makeTradeKey(t);
             if (!tradeMap.has(key)) {
                 tradeMap.set(key, t);
@@ -1329,6 +1380,9 @@ function finalizeAndWriteCache({ providerName, extracted, allTrades, actualCrawl
             }
         });
         mergedTrades = Array.from(tradeMap.values());
+        if (replacedProvisionalCount > 0 || keptProvisionalTrades.length > 0) {
+            console.log(`[Crawler] Webhook reconciliation: ${replacedProvisionalCount} provisional trade(s) overridden by Myfxbook, ${keptProvisionalTrades.length} pending retained.`);
+        }
     }
 
     // Always sort trades strictly descending by ISO close/open timestamp (newest first)
@@ -1364,11 +1418,20 @@ function finalizeAndWriteCache({ providerName, extracted, allTrades, actualCrawl
         }
     }
 
-    // Ensure growth points exist for days with trades beyond the last Highcharts growth point
+    // Ensure growth points exist for days with trades beyond the last Highcharts growth point,
+    // and add any pending kept provisional webhook gain on the tip date.
     if (finalGrowth.length > 0) {
         const lastPoint = finalGrowth[finalGrowth.length - 1];
         const lastDate = lastPoint.date;
         let currentCumGain = lastPoint.gain_pct;
+
+        for (const pt of keptProvisionalTrades) {
+            const iso = String(pt.close || pt.open || '').slice(0, 10);
+            if (iso === lastDate) {
+                currentCumGain = parseFloat((currentCumGain + (Number(pt.gain_pct) || 0)).toFixed(2));
+                lastPoint.gain_pct = currentCumGain;
+            }
+        }
 
         const sortedTradeDays = Array.from(tradesByDay.keys()).sort();
         sortedTradeDays.forEach(day => {
@@ -1386,7 +1449,8 @@ function finalizeAndWriteCache({ providerName, extracted, allTrades, actualCrawl
     const rawG = extracted.general;
     const eqParsed = parseEquity(rawG.equity);
     const hiParsed = parseHighest(rawG.highest, now);
-    const fallbackGeneral = existing && existing.general ? existing.general : null;
+    const refExisting = latestExisting || existing;
+    const fallbackGeneral = refExisting && refExisting.general ? refExisting.general : null;
 
     const normalizePeriod = (p, prev) => {
         if (!p || !p.gain || p.gain === '-') {
@@ -1403,12 +1467,13 @@ function finalizeAndWriteCache({ providerName, extracted, allTrades, actualCrawl
     };
 
     const finalPeriods = {
-        today: normalizePeriod(extracted.periods.today, fallbackGeneral && existing.periods && existing.periods.today),
-        week: normalizePeriod(extracted.periods.week, fallbackGeneral && existing.periods && existing.periods.week),
-        month: normalizePeriod(extracted.periods.month, fallbackGeneral && existing.periods && existing.periods.month),
-        year: normalizePeriod(extracted.periods.year, fallbackGeneral && existing.periods && existing.periods.year)
+        today: normalizePeriod(extracted.periods.today, fallbackGeneral && refExisting.periods && refExisting.periods.today),
+        week: normalizePeriod(extracted.periods.week, fallbackGeneral && refExisting.periods && refExisting.periods.week),
+        month: normalizePeriod(extracted.periods.month, fallbackGeneral && refExisting.periods && refExisting.periods.month),
+        year: normalizePeriod(extracted.periods.year, fallbackGeneral && refExisting.periods && refExisting.periods.year)
     };
 
+    const keptProvisionalProfit = keptProvisionalTrades.reduce((acc, t) => acc + (Number(t.profit) || 0), 0);
     const parsedBalance = parseNum(rawG.balance);
     const finalGeneral = (parsedBalance <= 0 && fallbackGeneral) ? { ...fallbackGeneral } : {
         gain_pct: finalGrowth.length > 0 ? finalGrowth[finalGrowth.length - 1].gain_pct : parseNum(rawG.gain),
@@ -1416,12 +1481,12 @@ function finalizeAndWriteCache({ providerName, extracted, allTrades, actualCrawl
         daily_pct: rawG.daily ? parseNum(rawG.daily) : finalPeriods.today.gain_pct,
         monthly_pct: rawG.monthly ? parseNum(rawG.monthly) : finalPeriods.month.gain_pct,
         drawdown_pct: parseNum(rawG.drawdown),
-        balance: parsedBalance,
-        equity: eqParsed.equity,
+        balance: parseFloat((parsedBalance + keptProvisionalProfit).toFixed(2)),
+        equity: parseFloat((eqParsed.equity + keptProvisionalProfit).toFixed(2)),
         equity_pct: eqParsed.equity_pct,
-        highest: hiParsed.highest,
+        highest: Math.max(hiParsed.highest, parseFloat((parsedBalance + keptProvisionalProfit).toFixed(2))),
         ...(hiParsed.highest_date ? { highest_date: hiParsed.highest_date } : {}),
-        profit: parseNum(rawG.profit),
+        profit: parseFloat((parseNum(rawG.profit) + keptProvisionalProfit).toFixed(2)),
         interest: parseNum(rawG.interest),
         deposits: parseNum(rawG.deposits),
         withdrawals: parseNum(rawG.withdrawals),
@@ -1432,12 +1497,13 @@ function finalizeAndWriteCache({ providerName, extracted, allTrades, actualCrawl
 
     const finalMonthlyGain = (extracted.monthlyGains && extracted.monthlyGains.length > 0)
         ? extracted.monthlyGains.map(m => ({ month: monthToISO(m.month), gain: Number(m.gain) || 0 }))
-        : (existing && existing.monthly_gain ? existing.monthly_gain : []);
+        : (refExisting && refExisting.monthly_gain ? refExisting.monthly_gain : []);
 
     const isFullCompleted = actualCrawlMode === 'full' && (crawledAllPages || allTrades.length > 0);
     const lastFullCrawlUtc = isFullCompleted
         ? now.toISOString()
-        : (existing && existing.last_full_crawl_utc ? existing.last_full_crawl_utc : undefined);
+        : (refExisting && refExisting.last_full_crawl_utc ? refExisting.last_full_crawl_utc : undefined);
+    const lastWebhookUtc = refExisting && refExisting.last_webhook_utc ? refExisting.last_webhook_utc : undefined;
 
     const finalData = {
         schema_version: 3,
@@ -1447,6 +1513,7 @@ function finalizeAndWriteCache({ providerName, extracted, allTrades, actualCrawl
         fetched_utc: now.toISOString(),
         last_crawl_mode: actualCrawlMode,
         ...(lastFullCrawlUtc ? { last_full_crawl_utc: lastFullCrawlUtc } : {}),
+        ...(lastWebhookUtc ? { last_webhook_utc: lastWebhookUtc } : {}),
         general: finalGeneral,
         periods: finalPeriods,
         growth: finalGrowth,

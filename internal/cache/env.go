@@ -109,3 +109,30 @@ func (m *Manager) envCandidatePaths() []string {
 	}
 	return unique
 }
+
+// ResolveEnvVar returns the first non-empty trimmed value for keys from process environment
+// or candidate .env files.
+func (m *Manager) ResolveEnvVar(keys ...string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	for _, p := range m.envCandidatePaths() {
+		vars, err := parseDotEnv(p)
+		if err != nil {
+			continue
+		}
+		for _, k := range keys {
+			if v := strings.TrimSpace(vars[k]); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// WebhookAPIKey returns the shared API key protecting webhook endpoints.
+func (m *Manager) WebhookAPIKey() string {
+	return m.ResolveEnvVar("SONIC_WEBHOOK_API_KEY", "WEBHOOK_API_KEY")
+}

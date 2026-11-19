@@ -309,3 +309,155 @@ func TestBuildCrawlerEnvPrecedence(t *testing.T) {
 	}
 }
 
+func TestIngestWebhookTradesScalingAndDedup(t *testing.T) {
+	now := time.Now().UTC()
+	fetchedAt := now.Add(-3 * time.Hour)
+	dir := t.TempDir()
+
+	maxUSD := 57243.81
+	minUSD := -15994.60
+	missedUSD := 23655.16
+
+	cacheData := &models.SonicData{
+		SchemaVersion:    3,
+		AccountName:      "SONIC AI",
+		AccountID:        "12076857",
+		FetchedUTC:       fetchedAt,
+		LastFullCrawlUTC: fetchedAt,
+		LastCrawlMode:    "full",
+		General: models.GeneralMetrics{
+			Balance: 142102.81,
+			Equity:  142102.81,
+			Profit:  36529.30,
+			GainPct: 32.30,
+			Trades:  1,
+		},
+		Growth: []models.GrowthPoint{
+			{Date: "2026-11-18", GainPct: 32.28},
+			{Date: "2026-11-19", GainPct: 32.30},
+		},
+		Lots: models.LotHistory{
+			Days: map[string]float64{"2026-11-19": 0.10},
+		},
+		Trades: []models.ClosedTrade{
+			{
+				// Settled Myfxbook trade truncated to minute (06:49:00 vs 06:49:19)
+				Open:            time.Date(2026, 11, 19, 6, 49, 0, 0, time.UTC),
+				Close:           time.Date(2026, 11, 19, 6, 53, 0, 0, time.UTC),
+				Symbol:          "XAUUSD",
+				Action:          "Sell",
+				Lots:            0.10,
+				OpenPrice:       3725.70,
+				ClosePrice:      3723.43,
+				Pips:            227,
+				Profit:          21.70,
+				DurationSeconds: 240,
+				GainPct:         0.02,
+			},
+		},
+		TradesCount: 1,
+	}
+	writeTempCacheFile(t, dir, cacheData)
+
+	mgr, err := NewManager(dir, "", 240*time.Minute)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer mgr.Close()
+
+	inputs := []models.WebhookTradeInput{
+		{
+			// Already scraped by Myfxbook (seconds differ by 19s/11s and close price slightly differs)
+			Open:          "2026-11-19T06:49:19Z",
+			Close:         "2026-11-19T06:53:11Z",
+			Symbol:        "XAUUSD.f",
+			Action:        "Sell",
+			Lots:          84.195368,
+			OpenPrice:     3725.70,
+			ClosePrice:    3723.79,
+			Pips:          191,
+			Profit:        15239.37,
+			GainPct:       0.0137,
+			BalanceBefore: 110910643.36,
+			Ticket:        "105661652",
+		},
+		{
+			// Brand-new closed trade not yet on Myfxbook
+			Open:          "2026-11-19T21:00:54Z",
+			Close:         "2026-11-19T21:21:50Z",
+			Symbol:        "XAUUSD",
+			Action:        "Sell",
+			Lots:          84.18208,
+			OpenPrice:     3679.16,
+			ClosePrice:    3675.17,
+			Pips:          399,
+			Profit:        32746.83,
+			GainPct:       0.0295,
+			BalanceBefore: 110908375.27,
+			Ticket:        "105681429",
+			Analytics: &models.TradeAnalytics{
+				MaxUSD:          &maxUSD,
+				MinUSD:          &minUSD,
+				ProfitMissedUSD: &missedUSD,
+			},
+		},
+	}
+
+	resp, err := mgr.IngestWebhookTrades(inputs)
+	if err != nil {
+		t.Fatalf("IngestWebhookTrades: %v", err)
+	}
+	if resp.Inserted != 1 || resp.SkippedExisting != 1 || resp.ProvisionalTrades != 1 {
+		t.Fatalf("unexpected ingest counts: %+v", resp)
+	}
+
+	updated, err := mgr.GetCachedData()
+	if err != nil {
+		t.Fatalf("GetCachedData: %v", err)
+	}
+	// FetchedUTC must remain unchanged so periodic Myfxbook crawl still triggers on schedule
+	if !updated.FetchedUTC.Equal(fetchedAt) {
+		t.Fatalf("expected FetchedUTC %v preserved, got %v", fetchedAt, updated.FetchedUTC)
+	}
+	if updated.LastWebhookUTC.IsZero() {
+		t.Fatalf("expected LastWebhookUTC to be set")
+	}
+	if len(updated.Trades) != 2 {
+		t.Fatalf("expected 2 total trades, got %d", len(updated.Trades))
+	}
+	prov := updated.Trades[0]
+	if !prov.Provisional || prov.Source != "webhook" || prov.Ticket != "105681429" {
+		t.Fatalf("unexpected provisional trade metadata: %+v", prov)
+	}
+	if prov.Lots != 0.10 {
+		t.Fatalf("expected estimated 1x lots=0.10, got %v", prov.Lots)
+	}
+	// 142102.81 * 0.0295% = 41.92
+	if math.Abs(prov.Profit-41.92) > 0.02 {
+		t.Fatalf("expected estimated 1x profit ~41.92, got %v", prov.Profit)
+	}
+	if prov.Analytics == nil || prov.Analytics.MaxUSD == nil || *prov.Analytics.MaxUSD > 200 {
+		t.Fatalf("expected MaxUSD scaled down to 1x, got %v", prov.Analytics)
+	}
+
+	// Re-sending identical payload skips cleanly without rewriting or drifting balance
+	resp2, err := mgr.IngestWebhookTrades(inputs)
+	if err != nil {
+		t.Fatalf("IngestWebhookTrades retry: %v", err)
+	}
+	if resp2.Updated != 0 || resp2.SkippedExisting != 2 || resp2.TotalTrades != 2 {
+		t.Fatalf("unexpected idempotent retry counts: %+v", resp2)
+	}
+
+	// Re-sending same ticket with modified fields updates in place
+	modifiedInputs := append([]models.WebhookTradeInput(nil), inputs...)
+	modifiedInputs[1].GainPct = 0.0310
+	resp3, err := mgr.IngestWebhookTrades(modifiedInputs)
+	if err != nil {
+		t.Fatalf("IngestWebhookTrades update: %v", err)
+	}
+	if resp3.Updated != 1 || resp3.SkippedExisting != 1 || resp3.TotalTrades != 2 {
+		t.Fatalf("unexpected modified retry counts: %+v", resp3)
+	}
+}
+

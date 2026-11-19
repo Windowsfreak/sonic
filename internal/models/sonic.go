@@ -56,6 +56,7 @@ type TradeAnalytics struct {
 	TimeProfitablePct      *float64  `json:"time_profitable_pct,omitempty"`
 	TimeProfitableDuration string    `json:"time_profitable_duration,omitempty"`
 	PricePath              []float64 `json:"price_path,omitempty"`
+	Basis                  string    `json:"basis,omitempty"`
 }
 
 // ClosedTrade represents a single closed trade with ISO-8601 timestamps and raw numeric metrics.
@@ -71,6 +72,9 @@ type ClosedTrade struct {
 	Profit          float64         `json:"profit"`
 	DurationSeconds int             `json:"duration_seconds"`
 	GainPct         float64         `json:"gain_pct"`
+	Source          string          `json:"source,omitempty"`
+	Ticket          string          `json:"ticket,omitempty"`
+	Provisional     bool            `json:"provisional,omitempty"`
 	Analytics       *TradeAnalytics `json:"analytics,omitempty"`
 }
 
@@ -99,6 +103,7 @@ type SonicData struct {
 	Source           string         `json:"source"`
 	FetchedUTC       time.Time      `json:"fetched_utc"`
 	LastFullCrawlUTC time.Time      `json:"last_full_crawl_utc,omitempty"`
+	LastWebhookUTC   time.Time      `json:"last_webhook_utc,omitempty"`
 	LastCrawlMode    string         `json:"last_crawl_mode,omitempty"`
 	General          GeneralMetrics `json:"general"`
 	Periods          PeriodsMap     `json:"periods"`
@@ -188,4 +193,49 @@ type ZoomData struct {
 	Calls         []ZoomItem         `json:"calls"`
 	Recordings    []ZoomItem         `json:"recordings"`
 	RecurringCall *RecurringZoomCall `json:"recurring_call,omitempty"`
+}
+
+// WebhookTradeInput represents an incoming closed trade pushed via the webhook endpoint.
+type WebhookTradeInput struct {
+	Open            string          `json:"open"`
+	Close           string          `json:"close"`
+	Symbol          string          `json:"symbol"`
+	Action          string          `json:"action"`
+	Lots            float64         `json:"lots"`
+	OpenPrice       float64         `json:"open_price"`
+	ClosePrice      float64         `json:"close_price"`
+	Pips            float64         `json:"pips"`
+	Profit          float64         `json:"profit"`
+	Commission      float64         `json:"commission,omitempty"`
+	Swap            float64         `json:"swap,omitempty"`
+	DurationSeconds int             `json:"duration_seconds,omitempty"`
+	GainPct         float64         `json:"gain_pct,omitempty"`
+	BalanceBefore   float64         `json:"balance_before,omitempty"`
+	BalanceAfter    float64         `json:"balance_after,omitempty"`
+	LeverageFactor  float64         `json:"leverage_factor,omitempty"`
+	Ticket          string          `json:"ticket,omitempty"`
+	TimeBasis       string          `json:"time_basis,omitempty"`
+	Analytics       *TradeAnalytics `json:"analytics,omitempty"`
+}
+
+// WebhookTradesPayload supports batch `{ "trades": [...] }`, `{ "trade": {...} }`, or single trade objects.
+type WebhookTradesPayload struct {
+	Konto  string              `json:"konto,omitempty"`
+	Anzahl int                 `json:"anzahl,omitempty"`
+	Trades []WebhookTradeInput `json:"trades,omitempty"`
+	Trade  *WebhookTradeInput  `json:"trade,omitempty"`
+}
+
+// WebhookTradesResponse summarizes how many trades were inserted, updated, or deduplicated.
+type WebhookTradesResponse struct {
+	Status            string    `json:"status"`
+	Inserted          int       `json:"inserted"`
+	Updated           int       `json:"updated"`
+	SkippedExisting   int       `json:"skipped_existing"`
+	Ignored           int       `json:"ignored"`
+	TotalTrades       int       `json:"total_trades"`
+	ProvisionalTrades int       `json:"provisional_trades"`
+	Balance           float64   `json:"balance"`
+	GainPct           float64   `json:"gain_pct"`
+	LastWebhookUTC    time.Time `json:"last_webhook_utc,omitempty"`
 }
