@@ -1,8 +1,11 @@
 package api
 
 import (
-	"crypto/subtle"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,7 +54,7 @@ func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
 		w.Header().Add("Vary", "Access-Control-Request-Headers")
 	} else {
-		w.Header().Set("Access-Control-Allow-Headers", "*, Authorization, Content-Type, X-API-Key")
+		w.Header().Set("Access-Control-Allow-Headers", "*, Content-Type, X-Sonic-Signature")
 	}
 	w.Header().Set("Access-Control-Max-Age", "86400")
 }
@@ -293,17 +296,22 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request, _ httprout
 	s.writeJSON(w, httpStatus, resp)
 }
 
-func extractBearerOrHeaderKey(r *http.Request) string {
-	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
-		if len(auth) >= 7 && strings.EqualFold(auth[:7], "Bearer ") {
-			return strings.TrimSpace(auth[7:])
-		}
-		return auth
+func verifySonicSignature(headerVal string, body []byte, secret string) bool {
+	sig := strings.TrimSpace(headerVal)
+	if sig == "" || secret == "" {
+		return false
 	}
-	if key := strings.TrimSpace(r.Header.Get("X-API-Key")); key != "" {
-		return key
+	if len(sig) >= 7 && strings.EqualFold(sig[:7], "sha256=") {
+		sig = strings.TrimSpace(sig[7:])
 	}
-	return ""
+	gotMAC, err := hex.DecodeString(sig)
+	if err != nil || len(gotMAC) != sha256.Size {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	expectedMAC := mac.Sum(nil)
+	return hmac.Equal(gotMAC, expectedMAC)
 }
 
 func parseWebhookPayload(raw []byte) ([]models.WebhookTradeInput, error) {
@@ -350,22 +358,26 @@ func (s *Server) handleWebhookTrades(w http.ResponseWriter, r *http.Request, _ h
 		return
 	}
 
-	providedKey := extractBearerOrHeaderKey(r)
-	if providedKey == "" || subtle.ConstantTimeCompare([]byte(providedKey), []byte(expectedKey)) != 1 {
-		s.writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing API key"})
+	sigHeader := r.Header.Get("X-Sonic-Signature")
+	if strings.TrimSpace(sigHeader) == "" {
+		s.writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing X-Sonic-Signature"})
 		return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 	defer r.Body.Close()
-	dec := json.NewDecoder(r.Body)
-	var raw json.RawMessage
-	if err := dec.Decode(&raw); err != nil {
-		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body: " + err.Error()})
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read request body: " + err.Error()})
 		return
 	}
 
-	inputs, err := parseWebhookPayload(raw)
+	if !verifySonicSignature(sigHeader, rawBody, expectedKey) {
+		s.writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid X-Sonic-Signature"})
+		return
+	}
+
+	inputs, err := parseWebhookPayload(rawBody)
 	if err != nil || len(inputs) == 0 {
 		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected trades array or trade object"})
 		return

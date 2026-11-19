@@ -1,6 +1,9 @@
 package api
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -219,6 +222,12 @@ func TestCORSAllAPIEndpoints(t *testing.T) {
 	}
 }
 
+func signWebhookTestBody(body, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(body))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func TestWebhookTradesAuthAndIngestion(t *testing.T) {
 	srv, _ := newTestServer(t, time.Now().UTC().Add(-2*time.Hour))
 	router := srv.Router()
@@ -251,45 +260,57 @@ func TestWebhookTradesAuthAndIngestion(t *testing.T) {
 		t.Fatalf("unconfigured key status = %d, want 503", rec503.Code)
 	}
 
-	// 2. Invalid/missing key returns 401
-	t.Setenv("SONIC_WEBHOOK_API_KEY", "super-secret-shared-key")
-	req401 := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
-	req401.Header.Set("X-API-Key", "wrong-key")
-	rec401 := httptest.NewRecorder()
-	router.ServeHTTP(rec401, req401)
-	if rec401.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong key status = %d, want 401", rec401.Code)
+	// 2. Raw X-API-Key / Bearer without X-Sonic-Signature is rejected (401)
+	const secret = "super-secret-shared-key"
+	t.Setenv("SONIC_WEBHOOK_API_KEY", secret)
+	reqLegacy := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
+	reqLegacy.Header.Set("X-API-Key", secret)
+	reqLegacy.Header.Set("Authorization", "Bearer "+secret)
+	recLegacy := httptest.NewRecorder()
+	router.ServeHTTP(recLegacy, reqLegacy)
+	if recLegacy.Code != http.StatusUnauthorized {
+		t.Fatalf("legacy API key header without signature status = %d, want 401", recLegacy.Code)
 	}
 
-	// 3. Valid X-API-Key succeeds
-	reqOK := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
-	reqOK.Header.Set("X-API-Key", "super-secret-shared-key")
-	recOK := httptest.NewRecorder()
-	router.ServeHTTP(recOK, reqOK)
-	if recOK.Code != http.StatusOK {
-		t.Fatalf("valid X-API-Key status = %d, want 200 (body: %s)", recOK.Code, recOK.Body.String())
+	// 3. Invalid or tampered body signature returns 401
+	hexSig := signWebhookTestBody(payload, secret)
+	reqTampered := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload+" "))
+	reqTampered.Header.Set("X-Sonic-Signature", "sha256="+hexSig)
+	recTampered := httptest.NewRecorder()
+	router.ServeHTTP(recTampered, reqTampered)
+	if recTampered.Code != http.StatusUnauthorized {
+		t.Fatalf("tampered body signature status = %d, want 401", recTampered.Code)
+	}
+
+	// 4. Valid sha256=<hex> convention succeeds
+	reqPrefixed := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
+	reqPrefixed.Header.Set("X-Sonic-Signature", "sha256="+hexSig)
+	recPrefixed := httptest.NewRecorder()
+	router.ServeHTTP(recPrefixed, reqPrefixed)
+	if recPrefixed.Code != http.StatusOK {
+		t.Fatalf("valid sha256= signature status = %d, want 200 (body: %s)", recPrefixed.Code, recPrefixed.Body.String())
 	}
 
 	var resp models.WebhookTradesResponse
-	if err := json.Unmarshal(recOK.Body.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(recPrefixed.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal webhook response: %v", err)
 	}
 	if resp.Inserted != 1 || resp.TotalTrades != 5 || resp.ProvisionalTrades != 1 {
 		t.Fatalf("unexpected webhook response: %+v", resp)
 	}
 
-	// 4. Valid Bearer token also works cleanly
-	reqBearer := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
-	reqBearer.Header.Set("Authorization", "Bearer super-secret-shared-key")
-	recBearer := httptest.NewRecorder()
-	router.ServeHTTP(recBearer, reqBearer)
-	if recBearer.Code != http.StatusOK {
-		t.Fatalf("Bearer retry status = %d, want 200", recBearer.Code)
+	// 5. Valid raw <hex> convention (uppercase/lowercase) also succeeds cleanly
+	reqRawHex := httptest.NewRequest(http.MethodPost, "/api/sonic/webhook/trades", strings.NewReader(payload))
+	reqRawHex.Header.Set("X-Sonic-Signature", strings.ToUpper(hexSig))
+	recRawHex := httptest.NewRecorder()
+	router.ServeHTTP(recRawHex, reqRawHex)
+	if recRawHex.Code != http.StatusOK {
+		t.Fatalf("valid raw hex signature status = %d, want 200 (body: %s)", recRawHex.Code, recRawHex.Body.String())
 	}
 	var resp2 models.WebhookTradesResponse
-	_ = json.Unmarshal(recBearer.Body.Bytes(), &resp2)
+	_ = json.Unmarshal(recRawHex.Body.Bytes(), &resp2)
 	if resp2.SkippedExisting != 1 || resp2.Updated != 0 || resp2.TotalTrades != 5 {
-		t.Fatalf("expected idempotent skip on Bearer retry, got %+v", resp2)
+		t.Fatalf("expected idempotent skip on raw hex retry, got %+v", resp2)
 	}
 }
 

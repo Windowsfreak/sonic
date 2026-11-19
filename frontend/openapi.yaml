@@ -232,18 +232,19 @@ paths:
   /api/sonic/webhook/trades:
     post:
       tags: [Sync]
-      summary: Ingest provisional MT5 trades via shared API key
+      summary: Ingest provisional MT5 trades via HMAC-SHA256 webhook signature
       description: >
         Accepts a single closed trade or batch (`{ "trades": [...] }`, `{ "trade": {...} }`,
-        or JSON array) authenticated with `SONIC_WEBHOOK_API_KEY` via `Authorization: Bearer <key>`
-        or `X-API-Key: <key>`. Deduplicates against already-scraped Myfxbook trades, scales
+        or JSON array) authenticated with an HMAC-SHA256 signature of the raw request body
+        using `SONIC_WEBHOOK_API_KEY` in `X-Sonic-Signature` (supports both `sha256=<hex>`
+        and raw `<hex>`). Deduplicates against already-scraped Myfxbook trades, scales
         high-balance master payloads (e.g. `dada_master`) down to the 1x master account, and
         marks new entries `provisional: true` until overridden by the next Myfxbook scrape.
       parameters:
-        - name: X-API-Key
+        - name: X-Sonic-Signature
           in: header
-          description: Shared webhook API key (alternative to `Authorization: Bearer <key>`)
-          required: false
+          description: HMAC-SHA256 hex digest of raw request body (`sha256=<hex>` or `<hex>`)
+          required: true
           schema:
             type: string
       requestBody:
