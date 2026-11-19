@@ -1,0 +1,670 @@
+openapi: 3.0.3
+info:
+  title: Sonic AI Frontend API
+  version: 2.0.0
+  description: >
+    REST API consumed by the Sonic AI frontend (`/index.html`, `/guide`, `/zooms`).
+    All API endpoints (including `OPTIONS` preflight requests) and `/openapi.yaml`
+    return permissive CORS headers (`Access-Control-Allow-Origin: *`,
+    `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers`), `snake_case`
+    property names, raw JSON numbers (formatted client-side), and ISO-8601 UTC dates/timestamps.
+servers:
+  - url: /
+    description: Same-origin server (served from Go HTTP backend / Unix socket reverse proxy)
+
+tags:
+  - name: Metrics
+    description: Account summary, historical equity growth, lots, and closed trade archive
+  - name: Analytics
+    description: Calendar breakdown (with 30% performance fee) and win/loss streak distributions
+  - name: Sync
+    description: Background Myfxbook scraper triggers and 30-minute cooldown status
+  - name: Community
+    description: Community Zoom calls and video recordings
+
+paths:
+  /api/sonic/summary:
+    get:
+      tags: [Metrics]
+      summary: Get cached account summary and period metrics
+      description: >
+        Returns the latest cached Myfxbook account overview, period breakdowns,
+        monthly gains, and cache/cooldown metadata.
+      responses:
+        "200":
+          description: Cached summary and metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SummaryResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/sonic/growth:
+    get:
+      tags: [Metrics]
+      summary: Get cumulative growth curve and daily lot series
+      description: Returns historical growth points (`date`, `gain_pct`), daily lot map, and monthly gains.
+      responses:
+        "200":
+          description: Historical growth series
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/sonic/trades:
+    get:
+      tags: [Metrics]
+      summary: List closed trades
+      description: Returns paginated or complete closed trade history including optional intra-trade sparkline analytics.
+      parameters:
+        - name: all
+          in: query
+          description: Set to `true` to bypass pagination and return up to 10,000 trades.
+          required: false
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          description: 1-based page number (ignored when `all=true`).
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Page size between 1 and 1000 (ignored when `all=true`).
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 20
+      responses:
+        "200":
+          description: Paginated trade list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradesResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/sonic/lots:
+    get:
+      tags: [Metrics]
+      summary: Get daily traded lot history
+      responses:
+        "200":
+          description: Daily traded lot sums keyed by ISO date (`YYYY-MM-DD`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LotHistory"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/sonic/calendar:
+    get:
+      tags: [Analytics]
+      summary: Get daily trading calendar and leveraged net growth
+      description: >
+        Aggregates closed trades by calendar date, returning plain JSON numbers
+        for dollar delta, trade counts, wins, losses, 1x master growth, and 12x / 24x
+        net percentage growth (accounting for a 30% performance fee on positive returns),
+        along with the slice of trades closed on each day.
+        Parameter precedence: when `month` (`YYYY-MM`) is provided without `date`,
+        the window covers the full specified calendar month (`1..28/29/30/31`) and
+        overrides `days`/`dir`. Otherwise, `date` + `days` + `dir` define the range.
+      parameters:
+        - name: date
+          in: query
+          description: >
+            Anchor date in `YYYY-MM-DD` (defaults to today in `Europe/Berlin`).
+            Unless `dir=forward` or `month` is set without `date`, this is the inclusive end date of the range.
+          required: false
+          schema:
+            type: string
+            format: date
+            example: "2026-11-12"
+        - name: days
+          in: query
+          description: Number of calendar days to include (`1..366`, default `7`). Ignored when `month` is set without `date`.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 366
+            default: 7
+        - name: month
+          in: query
+          description: >
+            Calendar month in `YYYY-MM`. When provided without `date`, sets the
+            window to cover the full specified month (`1..28/29/30/31`).
+          required: false
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}$"
+            example: "2026-11"
+        - name: dir
+          in: query
+          description: Window direction relative to `date` (`backward` ends on `date`; `forward` starts on `date`).
+          required: false
+          schema:
+            type: string
+            enum: [backward, forward]
+            default: backward
+      responses:
+        "200":
+          description: Calendar summary and daily breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/sonic/streaks:
+    get:
+      tags: [Analytics]
+      summary: Get winning and losing streak statistics
+      description: >
+        Computes current active streak (one of `current_winning_streak` or
+        `current_losing_streak` is always `0`), longest streaks, and 1-indexed
+        length-occurrence distributions (`[count(len=1), ..., count(len=max)]`).
+      responses:
+        "200":
+          description: Streak summary and distribution arrays
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreaksResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/sonic/update:
+    post:
+      tags: [Sync]
+      summary: Trigger asynchronous Myfxbook cache refresh
+      description: >
+        Starts a background crawl (`partial` or `full`) according to tiered staleness rules.
+        Returns `202 Accepted` when a background job is started (`started`) or already in flight
+        (`already_running`). Returns `200 OK` when the cache is within the 30-minute (`1800`s)
+        cooldown (`cooldown`, `force_ignored: true`) or fresh enough without `force=true` (`up_to_date`).
+      parameters:
+        - name: force
+          in: query
+          description: Request immediate refresh before normal 60-minute expiry (still blocked during 30-minute cooldown).
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: mode
+          in: query
+          description: Optional crawl mode override. Omit or pass `auto` to select tiered mode automatically.
+          required: false
+          schema:
+            type: string
+            enum: [auto, partial, full, metrics]
+            default: auto
+      responses:
+        "200":
+          description: Refresh skipped due to active 30-minute cooldown or still-fresh cache
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateResponse"
+        "202":
+          description: Background scrape job started or already running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/zooms:
+    get:
+      tags: [Community]
+      summary: Get community Zoom schedule and recordings
+      responses:
+        "200":
+          description: Community Zoom metadata, calls, and video recordings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZoomData"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  responses:
+    BadRequestError:
+      description: Invalid query parameter
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal server or cache read error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: invalid date format, expected YYYY-MM-DD
+
+    GeneralMetrics:
+      type: object
+      required:
+        - gain_pct
+        - abs_gain_pct
+        - daily_pct
+        - monthly_pct
+        - drawdown_pct
+        - balance
+        - equity
+        - equity_pct
+        - highest
+        - profit
+        - interest
+        - deposits
+        - withdrawals
+        - trades
+        - profit_factor
+        - updated_at
+      properties:
+        gain_pct: { type: number, example: 31.89 }
+        abs_gain_pct: { type: number, example: 29.85 }
+        daily_pct: { type: number, example: 0.04 }
+        monthly_pct: { type: number, example: 1.13 }
+        drawdown_pct: { type: number, example: 0.86 }
+        balance: { type: number, example: 141679.21 }
+        equity: { type: number, example: 141679.21 }
+        equity_pct: { type: number, example: 100.0 }
+        highest: { type: number, example: 141679.21 }
+        highest_date: { type: string, format: date, example: "2026-11-11" }
+        profit: { type: number, example: 36105.7 }
+        interest: { type: number, example: 0.0 }
+        deposits: { type: number, example: 121490.0 }
+        withdrawals: { type: number, example: 15916.49 }
+        trades: { type: integer, example: 655 }
+        profit_factor: { type: number, example: 5.21 }
+        updated_at: { type: string, format: date-time, example: "2026-11-12T07:14:00Z" }
+
+    PeriodMetric:
+      type: object
+      required: [gain_pct, profit, pips, win_rate_pct, trades, lots]
+      properties:
+        gain_pct: { type: number, example: 1.13 }
+        profit: { type: number, example: 1520.4 }
+        pips: { type: number, example: 145.2 }
+        win_rate_pct: { type: number, example: 85.0 }
+        trades: { type: integer, example: 21 }
+        lots: { type: number, example: 10.5 }
+
+    PeriodsMap:
+      type: object
+      required: [today, week, month, year]
+      properties:
+        today: { $ref: "#/components/schemas/PeriodMetric" }
+        week: { $ref: "#/components/schemas/PeriodMetric" }
+        month: { $ref: "#/components/schemas/PeriodMetric" }
+        year: { $ref: "#/components/schemas/PeriodMetric" }
+
+    GrowthPoint:
+      type: object
+      required: [date, gain_pct]
+      properties:
+        date: { type: string, format: date, example: "2026-10-28" }
+        gain_pct: { type: number, example: 30.89 }
+
+    MonthlyGain:
+      type: object
+      required: [month, gain]
+      properties:
+        month: { type: string, pattern: "^\\d{4}-\\d{2}$", example: "2026-10" }
+        gain: { type: number, example: 1.42 }
+
+    LotHistory:
+      type: object
+      required: [days]
+      properties:
+        days:
+          type: object
+          additionalProperties:
+            type: number
+          example:
+            "2026-10-28": 0.6
+
+    TradeAnalytics:
+      type: object
+      properties:
+        entry_accuracy: { type: number, nullable: true, example: 92.4 }
+        exit_accuracy: { type: number, nullable: true, example: 88.1 }
+        drawdown_pips: { type: number, nullable: true, example: 3.2 }
+        risk_reward: { type: string, example: "1:2.4" }
+        max_pips: { type: number, nullable: true, example: 18.5 }
+        max_usd: { type: number, nullable: true, example: 145.2 }
+        min_pips: { type: number, nullable: true, example: -3.2 }
+        min_usd: { type: number, nullable: true, example: -24.0 }
+        profit_missed_pips: { type: number, nullable: true, example: 1.8 }
+        profit_missed_usd: { type: number, nullable: true, example: 12.4 }
+        time_profitable_pct: { type: number, nullable: true, example: 81.5 }
+        time_profitable_duration: { type: string, example: "42m" }
+        price_path:
+          type: array
+          items:
+            type: number
+          description: Sampled price curve during the trade (first point is open price, last point is actual exit price).
+
+    ClosedTrade:
+      type: object
+      required:
+        - open
+        - close
+        - symbol
+        - action
+        - lots
+        - open_price
+        - close_price
+        - pips
+        - profit
+        - duration_seconds
+        - gain_pct
+      properties:
+        open: { type: string, format: date-time, example: "2026-10-28T08:15:00Z" }
+        close: { type: string, format: date-time, example: "2026-10-28T09:02:00Z" }
+        symbol: { type: string, example: "EURUSD" }
+        action: { type: string, enum: [Buy, Sell], example: "Buy" }
+        lots: { type: number, example: 0.4 }
+        open_price: { type: number, example: 1.0812 }
+        close_price: { type: number, example: 1.08452 }
+        pips: { type: number, example: 33.2 }
+        profit: { type: number, example: 132.8 }
+        duration_seconds: { type: integer, minimum: 0, example: 2820 }
+        gain_pct: { type: number, example: 0.09 }
+        analytics:
+          $ref: "#/components/schemas/TradeAnalytics"
+
+    SummaryResponse:
+      type: object
+      required:
+        - account_name
+        - account_id
+        - source
+        - fetched_utc
+        - age_seconds
+        - min_force_seconds
+        - is_stale
+        - is_updating
+        - general
+        - periods
+        - monthly_gain
+      properties:
+        account_name: { type: string, example: "SONIC AI" }
+        account_id: { type: string, example: "12076857" }
+        source: { type: string, example: "https://www.myfxbook.com/members/SonicExperts/sonic-ai/12076857" }
+        fetched_utc: { type: string, format: date-time, example: "2026-11-12T07:14:11Z" }
+        last_full_crawl_utc: { type: string, format: date-time }
+        last_crawl_mode: { type: string, enum: [full, partial, metrics, ""], example: "full" }
+        age_seconds: { type: integer, minimum: 0, example: 1200 }
+        min_force_seconds: { type: integer, example: 1800 }
+        is_stale: { type: boolean, example: false }
+        is_updating: { type: boolean, example: false }
+        general: { $ref: "#/components/schemas/GeneralMetrics" }
+        periods: { $ref: "#/components/schemas/PeriodsMap" }
+        monthly_gain:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonthlyGain"
+
+    GrowthResponse:
+      type: object
+      required: [fetched_utc, growth, lots, monthly_gain]
+      properties:
+        fetched_utc: { type: string, format: date-time, example: "2026-11-12T07:14:11Z" }
+        growth:
+          type: array
+          description: Chronological cumulative growth series
+          items:
+            $ref: "#/components/schemas/GrowthPoint"
+        lots:
+          type: object
+          additionalProperties:
+            type: number
+        monthly_gain:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonthlyGain"
+
+    TradesResponse:
+      type: object
+      required: [total, page, limit, trades]
+      properties:
+        total: { type: integer, example: 655 }
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 20 }
+        trades:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClosedTrade"
+
+    SonicData:
+      type: object
+      required:
+        - schema_version
+        - account_name
+        - account_id
+        - source
+        - fetched_utc
+        - general
+        - periods
+        - growth
+        - monthly_gain
+        - lots
+        - trades
+        - trades_count
+        - growth_count
+      properties:
+        schema_version: { type: integer, example: 3 }
+        account_name: { type: string }
+        account_id: { type: string }
+        source: { type: string }
+        fetched_utc: { type: string, format: date-time }
+        last_full_crawl_utc: { type: string, format: date-time }
+        last_crawl_mode: { type: string }
+        general: { $ref: "#/components/schemas/GeneralMetrics" }
+        periods: { $ref: "#/components/schemas/PeriodsMap" }
+        growth:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthPoint"
+        monthly_gain:
+          type: array
+          items: { $ref: "#/components/schemas/MonthlyGain" }
+        lots: { $ref: "#/components/schemas/LotHistory" }
+        trades:
+          type: array
+          items: { $ref: "#/components/schemas/ClosedTrade" }
+        trades_count: { type: integer }
+        growth_count: { type: integer }
+
+    CalendarDay:
+      type: object
+      required:
+        - date
+        - delta_account_value
+        - trades_count
+        - wins
+        - losses
+        - growth_1x_pct
+        - growth_12x_pct
+        - growth_24x_pct
+        - trades
+      properties:
+        date: { type: string, format: date, example: "2026-10-28" }
+        delta_account_value: { type: number, example: 132.8 }
+        trades_count: { type: integer, example: 1 }
+        wins: { type: integer, example: 1 }
+        losses: { type: integer, example: 0 }
+        growth_1x_pct: { type: number, example: 0.09 }
+        growth_12x_pct: { type: number, example: 0.756 }
+        growth_24x_pct: { type: number, example: 1.512 }
+        trades:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClosedTrade"
+
+    CalendarSummary:
+      type: object
+      required:
+        - delta_account_value
+        - trades_count
+        - wins
+        - losses
+        - growth_1x_pct
+        - growth_12x_pct
+        - growth_24x_pct
+      properties:
+        delta_account_value: { type: number, example: 1242.4 }
+        trades_count: { type: integer, example: 21 }
+        wins: { type: integer, example: 18 }
+        losses: { type: integer, example: 3 }
+        growth_1x_pct: { type: number, example: 0.8735 }
+        growth_12x_pct: { type: number, example: 7.4455 }
+        growth_24x_pct: { type: number, example: 15.4026 }
+
+    CalendarResponse:
+      type: object
+      required:
+        - date
+        - start_date
+        - end_date
+        - days_requested
+        - performance_fee_rate
+        - summary
+        - days
+      properties:
+        date: { type: string, format: date, example: "2026-10-31" }
+        start_date: { type: string, format: date, example: "2026-10-01" }
+        end_date: { type: string, format: date, example: "2026-10-31" }
+        days_requested: { type: integer, example: 31 }
+        performance_fee_rate: { type: number, example: 0.3 }
+        summary: { $ref: "#/components/schemas/CalendarSummary" }
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/CalendarDay"
+
+    StreaksResponse:
+      type: object
+      required:
+        - total_trades
+        - current_winning_streak
+        - current_losing_streak
+        - longest_winning_streak
+        - longest_losing_streak
+        - winning_distribution
+        - losing_distribution
+      properties:
+        total_trades: { type: integer, example: 655 }
+        current_winning_streak: { type: integer, example: 1 }
+        current_losing_streak: { type: integer, example: 0 }
+        longest_winning_streak: { type: integer, example: 19 }
+        longest_losing_streak: { type: integer, example: 3 }
+        winning_distribution:
+          type: array
+          items: { type: integer }
+          description: 1-indexed occurrence counts for winning streaks of length 1..longest_winning_streak
+          example: [15, 13, 12, 17, 7, 7, 9, 3, 3, 4, 2, 3, 1, 1, 2, 1, 0, 0, 2]
+        losing_distribution:
+          type: array
+          items: { type: integer }
+          description: 1-indexed occurrence counts for losing streaks of length 1..longest_losing_streak
+          example: [93, 7, 1]
+
+    UpdateResponse:
+      type: object
+      required:
+        - status
+        - started
+        - age_seconds
+        - is_stale
+        - is_updating
+        - min_force_seconds
+        - cooldown_active
+        - cooldown_remaining_seconds
+        - force_ignored
+      properties:
+        status:
+          type: string
+          enum: [started, already_running, cooldown, up_to_date]
+        started: { type: boolean }
+        age_seconds: { type: integer }
+        is_stale: { type: boolean }
+        is_updating: { type: boolean }
+        min_force_seconds: { type: integer, example: 1800 }
+        cooldown_active: { type: boolean }
+        cooldown_remaining_seconds: { type: integer }
+        force_ignored: { type: boolean }
+
+    ZoomItem:
+      type: object
+      required: [title, url]
+      properties:
+        title: { type: string }
+        date: { type: string }
+        time: { type: string }
+        language: { type: string }
+        description: { type: string }
+        url: { type: string, format: uri }
+        recording: { type: boolean }
+
+    RecurringZoomCall:
+      type: object
+      properties:
+        title: { type: string }
+        speakers:
+          type: array
+          items: { type: string }
+        weekday: { type: integer, minimum: 0, maximum: 6 }
+        time: { type: string, example: "20:30" }
+        time_zone: { type: string, example: "Europe/Berlin" }
+        url: { type: string, format: uri }
+        meeting_id: { type: string }
+        image: { type: string }
+        telegram_target: { type: string, format: uri }
+        skipped_dates:
+          type: array
+          items: { type: string, format: date }
+        telegram_targets:
+          type: array
+          items: { type: string, format: uri }
+        paused: { type: boolean }
+
+    ZoomData:
+      type: object
+      required: [calls, recordings]
+      properties:
+        calls:
+          type: array
+          items: { $ref: "#/components/schemas/ZoomItem" }
+        recordings:
+          type: array
+          items: { $ref: "#/components/schemas/ZoomItem" }
+        recurring_call:
+          $ref: "#/components/schemas/RecurringZoomCall"

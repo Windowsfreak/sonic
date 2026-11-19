@@ -1,0 +1,34 @@
+# Secrets & local environment
+.env
+.env.*
+!.env.example
+
+# Crawler session/cache & local artifacts
+data/sonic_cache.json
+data/*session*.json
+data/*.backup.json
+data/*.test.json
+scripts/*.bak
+frontend/php/
+
+# Logs & reference assets
+*.log
+reference/
+
+# Dependencies & compiled binaries
+node_modules/
+/sonic-server
+/sonic-server-*
+*.exe
+*.out
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,40 @@
+{
+  "calls": [],
+  "recordings": [
+    {
+      "title": "SMI Portfolio – Projektvorstellung",
+      "description": "Ein weiteres Projekt, in dem unser SMI Portfolio investiert ist, geben wir an unsere Partner weiter. Video von BFDA_official.",
+      "url": "https://youtu.be/4kO4_u5UCsM"
+    },
+    {
+      "title": "Interview mit Nik – Gründer von TAG Markets",
+      "description": "Das Interview mit Nik. Video von BFDA_official.",
+      "url": "https://youtu.be/G-W4MxTf-PQ"
+    },
+    {
+      "title": "Webinar Sonntagabend · 30.08.2026",
+      "description": "Webinar-Aufzeichnung von BFDA_official.",
+      "url": "https://youtu.be/JXVCui28thA"
+    }
+  ],
+  "recurring_call": {
+    "title": "TAG Markets Call",
+    "speakers": [
+      "Stefan Lumpp",
+      "Oliver Pielke"
+    ],
+    "weekday": 3,
+    "time": "20:30",
+    "time_zone": "Europe/Berlin",
+    "url": "https://us02web.zoom.us/j/5599741281",
+    "meeting_id": "559 974 1281",
+    "image": "/manus-storage/TAG_Call_Stefan_Polo_Mittelblau_efdcdc4f.webp",
+    "telegram_target": "https://t.me/c/2072164742/2",
+    "skipped_dates": [],
+    "telegram_targets": [
+      "https://t.me/c/2072164742/2",
+      "https://t.me/+BSAVgws0Xd42OGIy",
+      "https://t.me/c/3513085712/1112"
+    ]
+  }
+}

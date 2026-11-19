@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sonic AI · TAG Record</title>
+  <meta name="description" content="Echtzeit-Tracking und Zinseszins-Simulation für Sonic AI auf TAG Markets. Offizielle Myfxbook-Anbindung, 12x/24x Hebelrechner mit Gebühren- und Reinvestitionsmodell." />
+  <meta name="theme-color" content="#0a0c0b" />
+  
+  <link rel="icon" type="image/svg+xml" href="/assets/tag-mark.svg" />
+  <link rel="stylesheet" href="/assets/fonts/poppins.css" />
+  <link rel="stylesheet" href="/css/style.css?v=12" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/" aria-label="TAG Record">
+        <img src="/assets/tag-logo.svg" alt="TAG Record" width="102" height="26" />
+      </a>
+      <nav class="nav">
+        <a href="/" aria-current="page" class="nav-home">Home</a>
+        <a href="/guide.html">Guide</a>
+        <a href="/zooms.html">Zooms</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- Events Hero Carousel (auskommentiert) -->
+    <!--
+    <div class="events" id="events">
+      <section class="slide is-active" aria-label="BEYOND Krakow Summit">
+        <div class="ev-media">
+          <video class="ev-video" src="/assets/event/krakow.mp4" poster="/assets/event/krakow-poster.webp" autoplay muted loop playsinline></video>
+        </div>
+      </section>
+
+      <section class="slide" aria-label="BEYOND Bangkok Summit">
+        <div class="event-text">
+          <p class="event-eyebrow">Upcoming Event</p>
+          <h2 class="event-title">BEYOND Bangkok Summit</h2>
+          <p class="event-desc">One of the main events of the BEYOND Continental Tour. Leaders, partners and industry voices in trading and technology.</p>
+          <p class="event-desc"><strong>28–29 November 2026</strong> · Bangkok, Thailand</p>
+          <a href="https://copyxapp.com" target="_blank" rel="noopener noreferrer" class="btn btn-primary">Tickets auf copyxapp.com</a>
+        </div>
+        <img class="event-img" src="/assets/event/bangkok.webp" alt="Bangkok Summit" />
+      </section>
+
+      <section class="slide" aria-label="Sonic AI Promo">
+        <div class="ev-media">
+          <img src="/assets/event/sonic-promo.webp" alt="Sonic AI Promo" style="width:100%; height:auto; display:block;" />
+        </div>
+      </section>
+    </div>
+    -->
+
+    <!-- Live Myfxbook Sync Status Bar -->
+    <div class="sync-bar">
+      <div class="sync-status">
+        <span class="status-dot" id="sync-dot"></span>
+        <span><strong data-i18n>Datenstand:</strong> <span id="last-updated-text">Lade aktuelle Daten...</span></span>
+      </div>
+      <div class="sync-actions">
+        <div class="sync-info" id="sync-status-indicator" style="color: var(--text-muted); font-size: 12px;"></div>
+        <button type="button" id="btn-manual-refresh" class="btn-refresh" disabled>Jetzt aktualisieren</button>
+      </div>
+    </div>
+
+    <!-- Main Navigation Tabs -->
+    <div class="page-tabs" role="tablist">
+      <button class="page-tab is-active" data-panel="panel-sonic" role="tab" aria-selected="true">Trading Sonic & Rechner</button>
+      <button class="page-tab" data-panel="panel-affiliate" role="tab" aria-selected="false">Boni & Provisionen</button>
+      <button class="page-tab" data-panel="panel-plan" role="tab" aria-selected="false">Vergütungsplan</button>
+      <button class="page-tab" data-panel="panel-zones" role="tab" aria-selected="false">Zeitzonen & Marktzeiten</button>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TAB 1: TRADING SONIC & RECHNER             -->
+    <!-- ========================================== -->
+    <div class="page-panel" id="panel-sonic" role="tabpanel">
+      <!-- Calculator Controls -->
+      <section class="calc-card">
+        <div class="calc-grid">
+          <!-- Balance Input -->
+          <div class="calc-group">
+            <label class="calc-label" for="input-balance">
+              <span>Startkapital</span>
+            </label>
+            <div class="balance-input-wrap">
+              <input type="text" id="input-balance" class="balance-input" value="$10,000" inputmode="decimal" />
+            </div>
+            <div class="preset-chips">
+              <button class="preset-chip" data-amount="1000">$1,000</button>
+              <button class="preset-chip" data-amount="2500">$2,500</button>
+              <button class="preset-chip" data-amount="5000">$5,000</button>
+              <button class="preset-chip active" data-amount="10000">$10,000</button>
+              <button class="preset-chip" data-amount="25000">$25,000</button>
+              <button class="preset-chip" data-amount="50000">$50,000</button>
+            </div>
+          </div>
+
+          <!-- Amplification Selector -->
+          <div class="calc-group">
+            <label class="calc-label">
+              <span>Hebel</span>
+            </label>
+            <div class="btn-group">
+              <button class="btn-toggle btn-amp" data-amp="1">1x <span class="btn-toggle-sub">Original</span></button>
+              <button class="btn-toggle btn-amp" data-amp="12">12x <span class="btn-toggle-sub">Standard</span></button>
+              <button class="btn-toggle btn-amp active" data-amp="24">24x <span class="btn-toggle-sub">Maximum</span></button>
+            </div>
+          </div>
+
+          <!-- Compounding / Reinvestment Mode Selector -->
+          <div class="calc-group">
+            <label class="calc-label">
+              <span>Reinvest-Intervall</span>
+            </label>
+            <div class="btn-group">
+              <button class="btn-toggle btn-reinvest" data-reinvest="none">Keine</button>
+              <button class="btn-toggle btn-reinvest" data-reinvest="monthly">Monatlich</button>
+              <button class="btn-toggle btn-reinvest" data-reinvest="weekly">Wöchentlich</button>
+              <button class="btn-toggle btn-reinvest active" data-reinvest="daily">Täglich</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Forecast Controls Section -->
+        <div class="forecast-panel" style="margin: 20px 0 24px; padding: 18px 20px; background: rgba(0, 229, 255, 0.03); border: 1px solid rgba(0, 229, 255, 0.2); border-radius: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; background: rgba(0, 229, 255, 0.15); color: var(--accent-cyan);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </span>
+              <strong class="forecast-title" style="color: #fff; font-size: 14.5px;">Wachstumsprognose</strong>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span id="forecast-basis-badge" class="badge" style="font-size: 12px; color: var(--accent-cyan); font-weight: 600; background: rgba(0, 229, 255, 0.1); padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(0, 229, 255, 0.25);">
+                Prognose: Aus (Historische Ansicht)
+              </span>
+              <button id="btn-toggle-forecast" class="btn-toggle" style="font-size: 11.5px; padding: 4px 10px; min-height: 28px;">Prognose aktivieren</button>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px;">
+            <!-- Sample Period Slider -->
+            <div class="forecast-slider-item">
+              <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px;">
+                <span class="calc-label-inline" style="color: var(--text-secondary);">Analyse-Zeitraum (Vergangenheit):</span>
+                <strong id="label-sample-months" style="color: #fff;">Lade Zeitraum...</strong>
+              </div>
+              <input type="range" id="slider-sample-months" min="0" max="9" value="7" step="1" style="width: 100%; accent-color: var(--accent-cyan); cursor: pointer;" />
+              <div id="sample-months-ticks" style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                <span>1W</span>
+                <span>1M</span>
+                <span>3M</span>
+                <span>6M</span>
+                <span>YTD</span>
+                <span>12M</span>
+                <span style="color: var(--accent-cyan); font-weight:700;">13M</span>
+                <span>Max</span>
+              </div>
+            </div>
+
+            <!-- Forecast Horizon Slider -->
+            <div class="forecast-slider-item">
+              <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px;">
+                <span class="calc-label-inline" style="color: var(--text-secondary);">Prognose-Horizont (Zukunft):</span>
+                <strong id="label-forecast-months" style="color: var(--accent-cyan);">0 Monate (Aus)</strong>
+              </div>
+              <input type="range" id="slider-forecast-months" min="0" max="36" value="0" step="1" style="width: 100%; accent-color: var(--accent-cyan); cursor: pointer;" />
+              <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                <span class="tick-label">0 Monate (Aus)</span>
+                <span class="tick-label">+12 Monate (1 J.)</span>
+                <span class="tick-label">+36 Monate (3 J.)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Calculated KPI Result Tiles -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <span class="kpi-label">Projiziertes Endkapital</span>
+            <div class="kpi-val highlight" id="val-final-balance">$0.00</div>
+            <div class="kpi-sub">inkl. Reinvestition</div>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Netto-Gewinn</span>
+            <div class="kpi-val pos" id="val-net-profit">+$0.00</div>
+            <div class="kpi-sub">nach 30% Performance Fee</div>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Zinseszins-Vorteil</span>
+            <div class="kpi-val pos" id="val-comp-advantage">+$0.00</div>
+            <div class="kpi-sub">durch Reinvest</div>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Gesamtrendite (ROI)</span>
+            <div class="kpi-val" id="val-roi">+0.0%</div>
+            <div class="kpi-sub" id="val-annualized">~0% p.a.</div>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Gewinn ohne Reinvest</span>
+            <div class="kpi-val" id="val-linear-profit">$0.00</div>
+            <div class="kpi-sub">nach 30% Performance Fee</div>
+          </div>
+        </div>
+
+        <!-- Fee Transparency Card -->
+        <div class="fee-card">
+          <div class="fee-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            <strong>Gebühren-Aufschlüsselung:</strong>
+          </div>
+          <div class="fee-breakdown">
+            <div class="fee-item">
+              <span class="fee-k">Brutto-Handelsgewinn</span>
+              <span class="fee-v" id="fee-gross">$0</span>
+            </div>
+            <div class="fee-item">
+              <span class="fee-k">30% Performance Fee (HWM)</span>
+              <span class="fee-v minus" id="fee-perf">-$0</span>
+            </div>
+            <div class="fee-item">
+              <span class="fee-k">Netto-Auszahlung Investor (70%)</span>
+              <span class="fee-v plus" id="fee-net">$0</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Interactive SVG Chart Box -->
+      <section class="chart-box">
+        <div class="chart-header">
+          <div class="chart-title-area">
+            <h2 id="chart-title">Performance-Simulation</h2>
+            <p id="chart-subtitle">Grüne Linie = Zinseszins · Blaue gestrichelte Linie = Gewinn ohne Reinvest</p>
+          </div>
+          <div class="chart-toolbar">
+            <button class="range-btn" id="btn-toggle-display">Modus: USD ($)</button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap" id="sonic-chart-canvas"></div>
+      </section>
+
+      <!-- Sonic AI Deep Trading & Risk Metrics Dashboard -->
+      <section class="calc-card" style="margin-bottom: 32px; padding: 26px 24px; border-color: rgba(0, 230, 118, 0.2);">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 18px;">
+          <div>
+            <h2 class="section-title" style="margin-bottom: 4px; font-size: 20px;">Sonic AI Performance- &amp; Risikokennzahlen</h2>
+            <p class="section-desc" style="margin-bottom: 0;">
+              <span id="metrics-desc-prefix">Statistische Handels- und Risikoanalyse (aktualisiert dynamisch für gewählten Zeitraum:</span> <span id="metrics-active-range" style="color:var(--accent-emerald); font-weight:700;">Gesamt</span><span id="metrics-desc-suffix">)</span>.
+            </p>
+          </div>
+          <div class="badge badge-verified" style="font-size: 12px; color: var(--accent-emerald); font-weight: 600; background: rgba(0,230,118,0.1); padding: 5px 12px; border-radius: 999px; border: 1px solid rgba(0,230,118,0.25);">
+            Verifiziert via Myfxbook
+          </div>
+        </div>
+
+        <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px;">
+          <!-- 1. Number of Trades -->
+          <div class="kpi-card">
+            <span class="kpi-label">Anzahl Trades</span>
+            <div class="kpi-val" id="metric-trades-count">636</div>
+            <div class="kpi-sub" id="metric-trades-sub">Geschlossene Orders</div>
+          </div>
+
+          <!-- 2. Win Rate -->
+          <div class="kpi-card">
+            <span class="kpi-label">Trefferquote (Win Rate)</span>
+            <div class="kpi-val pos" id="metric-win-rate">83.2%</div>
+            <div class="kpi-sub" id="metric-win-sub">529 Gewinner · 107 Verlierer</div>
+          </div>
+
+          <!-- 3. Max Drawdown -->
+          <div class="kpi-card">
+            <span class="kpi-label">Max. Drawdown</span>
+            <div class="kpi-val" style="color: #ffb74d;" id="metric-max-dd">20.64%</div>
+            <div class="kpi-sub" id="metric-dd-sub">0.86% Basis × 24x Hebel</div>
+          </div>
+
+          <!-- 4. Average Profit per Trade (AHPR / GHPR / Expectancy) -->
+          <div class="kpi-card" style="grid-column: span 2; min-width: 250px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span class="kpi-label">Ø Trade-Ertrag &amp; Erwartungswert</span>
+              <span id="metric-expectancy-badge" style="font-size: 11px; background: rgba(0,230,118,0.15); color: var(--accent-emerald); padding: 2px 7px; border-radius: 4px; font-weight: 600;">+$100.72 / Trade</span>
+            </div>
+            <div class="kpi-val pos" id="metric-ahpr" style="font-size: 1.55rem;">+1.01% <span style="font-size: 0.9rem; color: var(--text-secondary); font-weight: normal;">(AHPR bei 24x)</span></div>
+            <div class="kpi-sub" id="metric-profit-sub" style="margin-top: 4px;">
+              GHPR: <strong id="metric-ghpr">+1.01%</strong> · <span class="metric-expectancy-lbl" data-i18n>Erwartungswert:</span> <strong id="metric-expectancy-val">+$100.72</strong>
+            </div>
+          </div>
+
+          <!-- 5. Sharpe Ratio -->
+          <div class="kpi-card">
+            <span class="kpi-label">Sharpe Ratio</span>
+            <div class="kpi-val highlight" id="metric-sharpe">6.66</div>
+            <div class="kpi-sub" id="metric-sharpe-sub">Risikoadjustierte Rendite (verifiziert)</div>
+          </div>
+
+          <!-- 6. Trade Duration (Median & Mean) -->
+          <div class="kpi-card">
+            <span class="kpi-label">Trade-Dauer (Median / Ø)</span>
+            <div class="kpi-val" id="metric-duration">11 Min</div>
+            <div class="kpi-sub" id="metric-duration-sub">Mittelwert: 240 Min (4.0 Std.)</div>
+          </div>
+
+          <!-- 7. Risk of Ruin -->
+          <div class="kpi-card">
+            <span class="kpi-label">Verlustserie bis Ruin</span>
+            <div class="kpi-val pos" id="metric-ror">22 Trades</div>
+            <div class="kpi-sub" id="metric-ror-sub">in Folge für 50% DD (Chance: &lt; 0.0001%)</div>
+          </div>
+        </div>
+
+        <!-- Educational Explainer Collapsible / Info Box -->
+        <div class="explainer-box" style="margin-top: 18px; padding: 14px 16px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: 8px; font-size: 12.5px; color: var(--text-secondary); line-height: 1.65;">
+          <div style="display: flex; gap: 8px; align-items: flex-start;">
+            <span style="color: var(--accent-cyan); font-weight: 700; margin-top: 1px;">ℹ️</span>
+            <div>
+              <p class="explainer-title" style="margin: 0 0 6px 0;"><strong style="color: #fff;">Methoden-Erklärung zu den Kennzahlen:</strong></p>
+              <ul style="margin: 0; padding-left: 18px; list-style-type: disc; display: flex; flex-direction: column; gap: 4px;">
+                <li><strong>AHPR &amp; GHPR:</strong> Arithmetischer und geometrischer Zuwachs pro Trade, skaliert mit dem gewählten Hebel.</li>
+                <li><strong>Erwartungswert:</strong> Rechnerischer Nettogewinn pro Trade basierend auf Ihrem eingestellten Startkapital und Hebel.</li>
+                <li><strong>Max. Drawdown:</strong> Basiert auf dem verifizierten Myfxbook-Tick-Drawdown (0.86% Gesamt bzw. 0.23% in 2026), multipliziert mit dem gewählten Hebel.</li>
+                <li><strong>Verlustserie bis Ruin:</strong> Wie viele Verlust-Trades direkt hintereinander ausgestoppt werden müssten, um 50% des Kapitals zu verlieren (z. B. 22 Trades bei 24x Hebel). Bei einer Trefferquote von 83.2% ist eine solche Serie mit einer Wahrscheinlichkeit von unter 1 zu 40 Billiarden statistisch praktisch ausgeschlossen (für 5% Drawdown: 2–3 Fehltrades).</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Periods Summary Table -->
+      <section style="margin-bottom: 32px;">
+        <h2 class="section-title">SONIC-Ergebnisse nach Zeitraum</h2>
+        <p class="section-desc">Ergebnisse des Master-Kontos (ungehebelt) als rechnerische Basis für die Hochrechnung.</p>
+        <div class="tbl-wrap">
+          <table class="sonic-table" id="periods-table">
+            <thead>
+              <tr>
+                <th>Zeitraum</th>
+                <th>Zuwachs</th>
+                <th>Profit</th>
+                <th>Pips</th>
+                <th>Win Rate</th>
+                <th>Trades</th>
+                <th>Lots</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="7" style="text-align:center; padding: 20px;">Lade Periodendaten...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Trading Calendar (Monday-start 7-Column Month Table) -->
+      <section class="calendar-section" id="calendar-section">
+        <div class="cal-header-row">
+          <div>
+            <h2 class="section-title" id="calendar-heading">Trading-Kalender</h2>
+            <p class="section-desc">Monatsübersicht ab Montag: Tages-Delta ($), Trades (Win/Loss) sowie Netto-Wachstum bei 12x &amp; 24x inkl. 30% Performance-Fee.</p>
+          </div>
+          <div class="cal-controls">
+            <button type="button" id="cal-prev-month" class="cal-nav-btn" aria-label="Vorheriger Monat">&#8592; Zurück</button>
+            <span id="cal-month-label" class="cal-month-label">—</span>
+            <button type="button" id="cal-next-month" class="cal-nav-btn" aria-label="Nächster Monat">Weiter &#8594;</button>
+            <button type="button" id="cal-current-month" class="cal-nav-btn cal-today-btn">Aktueller Monat</button>
+            <button type="button" id="cal-jump-latest" class="cal-nav-btn cal-jump-btn" hidden>Letzter aktiver Monat</button>
+          </div>
+        </div>
+
+        <div class="cal-month-summary" id="cal-month-summary" aria-live="polite"></div>
+
+        <div class="table-card cal-card">
+          <div class="cal-table-wrap" tabindex="0" role="region" aria-labelledby="calendar-heading">
+            <table class="calendar-table" id="calendar-table">
+              <caption class="sr-only" id="calendar-caption">Monatlicher Trading-Kalender (Woche beginnt am Montag) mit Kontowert-Delta, Trade-Anzahl, Gewinnen, Verlusten sowie 12x- und 24x-Nettowachstum.</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Mo</th>
+                  <th scope="col">Di</th>
+                  <th scope="col">Mi</th>
+                  <th scope="col">Do</th>
+                  <th scope="col">Fr</th>
+                  <th scope="col">Sa</th>
+                  <th scope="col">So</th>
+                </tr>
+              </thead>
+              <tbody id="calendar-body">
+                <tr><td colspan="7" class="cal-loading-cell">Lade Monatskalender...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="cal-day-detail" id="calendar-day-detail" hidden></div>
+      </section>
+
+      <!-- Streaks Distribution Chart -->
+      <section class="streaks-section" id="streaks-section">
+        <div class="streaks-header-row">
+          <div>
+            <h2 class="section-title" id="streaks-heading">Gewinn- &amp; Verlustserien (Streaks)</h2>
+            <p class="section-desc">Häufigkeitsverteilung abgeschlossener Verlustserien (rot, links) und Gewinnserien (grün, rechts) nach Serienlänge.</p>
+          </div>
+        </div>
+
+        <div class="streaks-summary" id="streaks-summary">
+          <div class="streak-kpi">
+            <span class="streak-kpi-label" id="streak-cur-label">Aktuelle Serie</span>
+            <strong class="streak-kpi-value" id="streak-cur-value">—</strong>
+          </div>
+          <div class="streak-kpi">
+            <span class="streak-kpi-label">Längste Gewinnserie</span>
+            <strong class="streak-kpi-value pos" id="streak-max-win">—</strong>
+          </div>
+          <div class="streak-kpi">
+            <span class="streak-kpi-label">Längste Verlustserie</span>
+            <strong class="streak-kpi-value neg" id="streak-max-loss">—</strong>
+          </div>
+          <div class="streak-kpi">
+            <span class="streak-kpi-label">Ausgewertete Trades</span>
+            <strong class="streak-kpi-value" id="streak-total-trades">—</strong>
+          </div>
+        </div>
+
+        <div class="chart-card streaks-chart-card">
+          <div id="streaks-chart-canvas" class="streaks-chart-canvas"></div>
+        </div>
+      </section>
+
+      <!-- Closed Trades Archive Table -->
+      <section>
+        <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">
+          <div>
+            <h2 class="section-title">Trade-Archiv</h2>
+            <p class="section-desc">Geschlossene Trades des Master-Systems mit Einstieg, Ausstieg, Pips und Profit.</p>
+          </div>
+        </div>
+        <div class="tbl-wrap" id="trades-scroll-wrap" style="max-height: 580px; overflow-y: auto;">
+          <table class="sonic-table" id="trades-table">
+            <thead>
+              <tr>
+                <th>Instrument & Typ</th>
+                <th>Lots</th>
+                <th>Einstieg</th>
+                <th>Ausstieg</th>
+                <th>Pips</th>
+                <th>Profit</th>
+                <th>Dauer</th>
+                <th>Verlauf &amp; Präzision</th>
+                <th>Eröffnungszeit</th>
+                <th>Schließungszeit</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="10" style="text-align:center; padding: 24px; color: var(--text-muted);">Trade-Historie wird geladen...</td></tr>
+            </tbody>
+          </table>
+          <div id="trades-scroll-sentinel" style="height: 32px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-muted); padding: 6px 0;"></div>
+        </div>
+        <div class="pager" id="trades-pager"></div>
+      </section>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TAB 2: BONUSES & AFFILIATE                 -->
+    <!-- ========================================== -->
+    <!-- ========================================== -->
+    <!-- TAB 2: BONUSES & AFFILIATE                 -->
+    <!-- ========================================== -->
+    <div class="page-panel" id="panel-affiliate" role="tabpanel" hidden>
+      <section class="calc-card">
+        <div class="calc-grid">
+          <div class="calc-group" style="max-width: 520px;">
+            <label class="calc-label" for="aff-team-balance">
+              <span>Gesamtes Team-Volumen</span>
+            </label>
+            <div class="balance-input-wrap">
+              <input type="text" id="aff-team-balance" class="balance-input" value="$100,000" inputmode="decimal" />
+            </div>
+            <div class="preset-chips">
+              <button class="preset-chip-aff" data-amount="10000">$10,000</button>
+              <button class="preset-chip-aff" data-amount="25000">$25,000</button>
+              <button class="preset-chip-aff" data-amount="50000">$50,000</button>
+              <button class="preset-chip-aff active" data-amount="100000">$100,000</button>
+              <button class="preset-chip-aff" data-amount="250000">$250,000</button>
+              <button class="preset-chip-aff" data-amount="500000">$500,000</button>
+              <button class="preset-chip-aff" data-amount="1000000">$1,000,000</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Team Gross Profit Cards -->
+        <div style="margin-top: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">
+            <h3 class="section-title" style="font-size: 16px; margin: 0;">Team Brutto-Handelserfolg (~16% p.M. Basis / 24x Hebel)</h3>
+            <span id="aff-live-rate-badge" style="font-size: 11.5px; color: var(--accent-emerald); background: rgba(0,230,118,0.1); padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(0,230,118,0.25);">
+              Basis: 16.0% p.M. (Live Myfxbook)
+            </span>
+          </div>
+          <div class="kpi-grid" style="margin-top: 12px;">
+            <div class="kpi-card">
+              <span class="kpi-label">Täglicher Team-Gewinn</span>
+              <div class="kpi-val pos" id="aff-gross-daily">$0</div>
+              <div class="kpi-sub">geschätzt bei ~16% Monatsrendite</div>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-label">Wöchentlicher Team-Gewinn</span>
+              <div class="kpi-val pos" id="aff-gross-weekly">$0</div>
+              <div class="kpi-sub">Basis für wöchentlichen Share-Bonus</div>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-label">Monatlicher Team-Gewinn</span>
+              <div class="kpi-val pos" id="aff-gross-monthly">$0</div>
+              <div class="kpi-sub">Hochrechnung auf Monatsebene (~16%)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Qualification Rule -->
+        <p style="font-size: 13px; color: var(--text-muted); margin-top: 16px; background: rgba(255,255,255,0.03); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-subtle);">
+          💡 <strong>Qualifikation:</strong> Mindestens <strong>$250 Eigenkapital</strong> in CopyX. Jeder direkte qualifizierte Partner mit mindestens $250 schaltet eine weitere Generation frei (10 direkte Partner = alle 10 Ebenen freigeschaltet).
+        </p>
+
+        <!-- Weekly Bonuses Section -->
+        <div style="margin-top: 32px; border-top: 1px solid var(--border-subtle); padding-top: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 6px;">
+            <h3 class="section-title" style="font-size: 18px; margin: 0;">Wöchentliche Boni (Weekly Bonuses)</h3>
+            <div class="btn-group" style="margin: 0;">
+              <button class="btn-toggle btn-lot-mode active" data-lot-mode="multi" style="font-size: 11.5px; padding: 4px 10px; min-height: 28px;">Multi-Level Ø (21.7%)</button>
+              <button class="btn-toggle btn-lot-mode" data-lot-mode="single" style="font-size: 11.5px; padding: 4px 10px; min-height: 28px;">Ebene 1 direkt (38.8%)</button>
+            </div>
+          </div>
+          <p class="section-desc" style="margin-bottom: 16px;">Share-Bonus und Lot-Bonus werden wöchentlich jeden Samstagnachmittag direkt auf dein Wallet gutgeschrieben.</p>
+          
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+            <!-- Share Bonus -->
+            <div class="kpi-card" style="border-color: rgba(0, 230, 118, 0.25);">
+              <span class="kpi-label">1. Share Bonus (2.5% pro Ebene)</span>
+              <div class="kpi-val pos" id="aff-share-week">$0</div>
+              <div class="kpi-sub">wöchentliche Auszahlung (geschätzt)</div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px; border-top: 1px solid var(--border-subtle); padding-top: 6px;">
+                Monatlich: <strong id="aff-share-month" style="color: #fff;">$0</strong>
+              </div>
+            </div>
+
+            <!-- Lot Bonus -->
+            <div class="kpi-card" style="border-color: rgba(0, 229, 255, 0.25);">
+              <span class="kpi-label">2. Lot Bonus (Team-Handelsvolumen)</span>
+              <div class="kpi-val pos" id="aff-lot-week">$0</div>
+              <div class="kpi-sub" id="aff-lot-sub">wöchentliche Auszahlung (~21.7% des Share-Bonus)</div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px; border-top: 1px solid var(--border-subtle); padding-top: 6px;">
+                Monatlich: <strong id="aff-lot-month" style="color: #fff;">$0</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Monthly General Bonus Calculator -->
+        <div style="margin-top: 36px; border-top: 1px solid var(--border-subtle); padding-top: 24px;">
+          <h3 class="section-title" style="font-size: 18px; margin-bottom: 6px;">3. General Bonus Rechner (CPA / Monatlicher Karrierebonus)</h3>
+          <p class="section-desc" style="margin-bottom: 18px;">
+            Berechnung basierend auf dem neuen monatlichen Teamvolumen. Die 50%-Regel gilt: Eine einzelne Linie darf maximal die Hälfte des für eine Stufe benötigten Volumens beitragen.
+          </p>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 20px;">
+            <div>
+              <label class="calc-label" for="gb-total-input">Neues monatliches Teamvolumen</label>
+              <div class="balance-input-wrap">
+                <input type="text" id="gb-total-input" class="balance-input" value="$150,000" inputmode="decimal" />
+              </div>
+            </div>
+            <div>
+              <label class="calc-label" for="gb-line-input">Volumen der stärksten direkten Linie</label>
+              <div class="balance-input-wrap">
+                <input type="text" id="gb-line-input" class="balance-input" value="$40,000" inputmode="decimal" />
+              </div>
+            </div>
+          </div>
+
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <span class="kpi-label">Erreichte Stufe</span>
+              <div class="kpi-val highlight" id="gb-level-pct">2%</div>
+              <div class="kpi-sub" id="gb-level-sub">ab $50,000 Teamvolumen</div>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-label">Gewertetes Volumen</span>
+              <div class="kpi-val" id="gb-counted-vol">$135,000</div>
+              <div class="kpi-sub" id="gb-counted-sub">Stärkste Linie max. $25,000 gewertet</div>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-label">Nächste Stufe</span>
+              <div class="kpi-val" id="gb-next-pct">3.5%</div>
+              <div class="kpi-sub" id="gb-next-sub">ab $200,000 Teamvolumen</div>
+            </div>
+            <div class="kpi-card" style="border-color: rgba(200, 241, 80, 0.3);">
+              <span class="kpi-label">General Bonus Provision</span>
+              <div class="kpi-val pos" id="gb-payout">$2,600</div>
+              <div class="kpi-sub">wird monatlich abgerechnet</div>
+            </div>
+          </div>
+
+          <div id="gb-calc-note" style="margin-top: 14px; font-size: 13px; color: var(--text-muted); line-height: 1.6; background: rgba(255,255,255,0.02); padding: 12px 16px; border-radius: 8px;">
+            Berechnung: Stärkste Linie erreicht eigene 1%-Stufe (Differenz: 2% - 1% = 1% auf $40k = $400). Restliches Team: volle 2% auf $110k = $2,200. Gesamt = $2,600.
+          </div>
+        </div>
+
+        <!-- Grand Total Summary Banner -->
+        <div class="grand-banner" style="margin-top: 36px; padding: 24px; border-radius: 16px; background: linear-gradient(135deg, rgba(0,230,118,0.1), rgba(0,229,255,0.08)); border: 1px solid rgba(0, 230, 118, 0.3);">
+          <div style="font-size: 12px; font-weight: 700; color: var(--accent-emerald); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+            Gesamte geschätzte Monatsprovision (Grand Total)
+          </div>
+          <div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px;">
+            <div>
+              <div style="font-size: 12px; color: var(--text-muted);">Share Bonus</div>
+              <div style="font-size: 20px; font-weight: 700; color: #fff;" id="grand-share">$0</div>
+            </div>
+            <span style="font-size: 20px; color: var(--text-muted);">+</span>
+            <div>
+              <div style="font-size: 12px; color: var(--text-muted);">Lot Bonus</div>
+              <div style="font-size: 20px; font-weight: 700; color: #fff;" id="grand-lot">$0</div>
+            </div>
+            <span style="font-size: 20px; color: var(--text-muted);">+</span>
+            <div>
+              <div style="font-size: 12px; color: var(--text-muted);">General Bonus</div>
+              <div style="font-size: 20px; font-weight: 700; color: #fff;" id="grand-gb">$2,600</div>
+            </div>
+            <span style="font-size: 24px; color: var(--accent-emerald);">=</span>
+            <div>
+              <div style="font-size: 12px; color: var(--accent-emerald); font-weight: 700;">Gesamt monatlich</div>
+              <div style="font-size: 32px; font-weight: 900; color: var(--accent-emerald);" id="grand-total">$2,600</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TAB 3: COMPENSATION PLAN                   -->
+    <!-- ========================================== -->
+    <div class="page-panel" id="panel-plan" role="tabpanel" hidden>
+      <div class="plan-grid">
+        <!-- 0. Profit Distribution Bar -->
+        <section class="plan-card plan-wide">
+          <h2 class="section-title">Aufteilung des Handelserfolgs (Profit Distribution)</h2>
+          <div class="plan-bar">
+            <span class="pb-part" style="width: 70%;">70% DU (Investor)</span>
+            <span class="pb-trader" style="width: 5%;">5% Trader</span>
+            <span class="pb-net" style="width: 25%;">25% Network (10 Level)</span>
+          </div>
+          <ul class="plan-legend">
+            <li><span class="sw" style="background: #6d4fd8;"></span>70% DU (Investor)</li>
+            <li><span class="sw" style="background: #1baf7a;"></span>5% Trader-Beteiligung</li>
+            <li><span class="sw" style="background: #2a78d6;"></span>25% Netzwerk (10 Generationen à 2.5%)</li>
+          </ul>
+          <p style="font-size: 13px; color: var(--text-secondary); margin-top: 12px; line-height: 1.6;">
+            Von jedem positiven Handelsgewinn behältst du garantiert 70%. Die 30% Performance Fee finanziert die 5% Trader-Erfolgsbeteiligung sowie 25% Netzwerk-Boni, die über 10 Generationen ausgeschüttet werden.
+          </p>
+        </section>
+
+        <!-- 1. Share Bonus -->
+        <section class="plan-card">
+          <h3 class="section-title">1. Share Bonus (Profit Share)</h3>
+          <ul class="plan-rows">
+            <li><span>Level 1 (Direkt)</span><strong>2.5%</strong></li>
+            <li><span>Level 2</span><strong>2.5%</strong></li>
+            <li><span>Level 3–4</span><strong>2.5% je Level</strong></li>
+            <li><span>Level 5–10</span><strong>2.5% je Level</strong></li>
+          </ul>
+          <p class="plan-total"><span>Gesamtausschüttung</span><strong>25.0%</strong></p>
+          <p style="font-size: 13px; color: var(--text-secondary); margin-top: 10px; line-height: 1.6;">
+            Von dem Brutto-Handelsgewinn jedes Partners in deinem Team gehen 25% ins Netzwerk (2.5% pro Ebene über 10 Ebenen). 
+            Voraussetzung: Mindestens $250 Eigenkapital in CopyX. Jeder direkte Partner mit mindestens $250 schaltet eine weitere Generation frei (10 direkte = alle 10 Level). Auszahlung wöchentlich.
+          </p>
+          <p style="font-size: 12px; color: var(--accent-cyan); margin-top: 6px;">
+            Beispiel: Ein Partner in Level 3 erzielt $1.000 Bruttogewinn in einer Woche. Du erhältst 2.5% = $25.
+          </p>
+        </section>
+
+        <!-- 2. Lot Bonus -->
+        <section class="plan-card">
+          <h3 class="section-title">2. Lot Bonus</h3>
+          <ul class="plan-rows">
+            <li><span>Level 1</span><strong style="color: var(--accent-cyan);">$2.00 / Lot</strong></li>
+            <li><span>Level 2</span><strong style="color: var(--accent-cyan);">$1.50 / Lot</strong></li>
+            <li><span>Level 3–4</span><strong style="color: var(--accent-cyan);">$1.00 / Lot</strong></li>
+            <li><span>Level 5–10</span><strong style="color: var(--accent-cyan);">$0.50 / Lot</strong></li>
+          </ul>
+          <p class="plan-total"><span>Maximal pro Standard-Lot</span><strong>$8.50</strong></p>
+          <p style="font-size: 13px; color: var(--text-secondary); margin-top: 10px; line-height: 1.6;">
+            Für jedes im Team gehandelte Standard-Lot erhältst du eine feste Vergütung abhängig von der Generation. Ein Lot schüttet maximal $8.50 über alle 10 Ebenen aus. Freischaltung analog zum Share-Bonus. Auszahlung wöchentlich.
+          </p>
+          <p style="font-size: 12px; color: var(--accent-cyan); margin-top: 6px;">
+            Beispiel: Deine direkten Partner (Level 1) handeln 10 Standard-Lots in der Woche. Du erhältst 10 × $2.00 = $20.
+          </p>
+        </section>
+
+        <!-- 3. General Bonus (CPA Ladder) -->
+        <section class="plan-card plan-wide">
+          <h3 class="section-title">3. General Bonus (Monatliches Karriere-Volumen)</h3>
+          <p class="section-desc" style="margin-bottom: 16px;">
+            Neues monatliches Teamvolumen. Es gilt die 50%-Regel: Eine Linie zählt maximal bis zur Hälfte des Stufenvolumens.
+          </p>
+          <ul class="plan-cpa">
+            <li><b style="color: #2a78d6;">1%</b><span class="track"><span class="fill" style="width: 8%; background: #2a78d6;"></span></span><span class="amt">$10,000*</span></li>
+            <li><b style="color: #1baf7a;">2%</b><span class="track"><span class="fill" style="width: 20%; background: #1baf7a;"></span></span><span class="amt">$50,000</span></li>
+            <li><b style="color: #e9a60c;">3.5%</b><span class="track"><span class="fill" style="width: 35%; background: #e9a60c;"></span></span><span class="amt">$200,000</span></li>
+            <li><b style="color: #eb6834;">5%</b><span class="track"><span class="fill" style="width: 50%; background: #eb6834;"></span></span><span class="amt">$1,000,000</span></li>
+            <li><b style="color: #6d4fd8;">5.5%</b><span class="track"><span class="fill" style="width: 65%; background: #6d4fd8;"></span></span><span class="amt">$5,000,000</span></li>
+            <li><b style="color: #0f9fb0;">6%</b><span class="track"><span class="fill" style="width: 75%; background: #0f9fb0;"></span></span><span class="amt">$7,500,000</span></li>
+            <li><b style="color: #d6457f;">6.5%</b><span class="track"><span class="fill" style="width: 85%; background: #d6457f;"></span></span><span class="amt">$20,000,000</span></li>
+            <li><b style="color: #00e5ff;">7%</b><span class="track"><span class="fill" style="width: 92%; background: #00e5ff;"></span></span><span class="amt">$50,000,000</span></li>
+            <li><b style="color: #00e676;">7.5%</b><span class="track"><span class="fill" style="width: 100%; background: #00e676;"></span></span><span class="amt">$100,000,000</span></li>
+          </ul>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 14px;">
+            * Auf der 1. Stufe müssen die $10.000 ausschließlich aus Neukundeneinzahlungen direkter Partner stammen.
+          </p>
+          <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-top: 8px;">
+            Erreicht eine Linie eine eigene Stufe, erhältst du auf diese Linie die Differenzprovision; auf den Rest des Teams erhältst du deine volle Stufenprovision. Auszahlung monatlich.
+          </p>
+        </section>
+
+        <!-- 4. Leader Pools -->
+        <section class="plan-card plan-wide">
+          <h3 class="section-title">4. Leader Pools</h3>
+          <div class="pools-grid">
+            <div class="pool-box">
+              <span class="pool-badge">LEADER POOL 1</span>
+              <div class="pool-amount">$500,000</div>
+              <div class="pool-req">Neues monatliches Teamvolumen (nach 50%-Regel)</div>
+            </div>
+            <div class="pool-box pool-box-purple">
+              <span class="pool-badge" style="color: var(--accent-purple);">LEADER POOL 2</span>
+              <div class="pool-amount">$1,000,000</div>
+              <div class="pool-req">Neues monatliches Teamvolumen (nach 50%-Regel)</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. Community Incentives -->
+        <section class="plan-card plan-wide">
+          <h3 class="section-title">5. Community Incentives</h3>
+          <div class="incs-grid">
+            <div class="inc-box">
+              <span class="inc-icon">✈️</span>
+              <div class="inc-title">Reisegutschein</div>
+              <div class="inc-val">$2,000 / USDT</div>
+              <div class="inc-desc">$50.000 neues Monatsvolumen im Gesamtnetzwerk innerhalb von 3 aufeinanderfolgenden Monaten (50%-Regel).</div>
+              <div class="inc-freq">1x pro Jahr</div>
+            </div>
+            <div class="inc-box">
+              <span class="inc-icon">⌚</span>
+              <div class="inc-title">Luxusuhr (Rolex)</div>
+              <div class="inc-val">bis zu $15,000</div>
+              <div class="inc-desc">Leader Pool 1 ($500.000 neues Monatsvolumen nach 50%-Regel) für 2 aufeinanderfolgende Monate.</div>
+              <div class="inc-freq">1x alle 18 Monate</div>
+            </div>
+            <div class="inc-box">
+              <span class="inc-icon">⌚</span>
+              <div class="inc-title">Luxusuhr (Rolex)</div>
+              <div class="inc-val">bis zu $25,000</div>
+              <div class="inc-desc">Leader Pool 2 ($1.000.000 neues Monatsvolumen nach 50%-Regel) für 2 aufeinanderfolgende Monate.</div>
+              <div class="inc-freq">1x alle 18 Monate</div>
+            </div>
+            <div class="inc-box inc-top">
+              <span class="inc-icon">🏡</span>
+              <div class="inc-title">Eigenes Familienhaus</div>
+              <div class="inc-val gold">bis zu $1,200,000</div>
+              <div class="inc-desc">Leader Pool 2 mit mindestens 3 Anteilen à $1M (50%-Regel) für 6 aufeinanderfolgende Monate.</div>
+              <div class="inc-freq">1x alle 36 Monate</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TAB 4: TIME ZONES                          -->
+    <!-- ========================================== -->
+    <div class="page-panel" id="panel-zones" role="tabpanel" hidden>
+      <!-- Interactive World Clock Application -->
+      <section class="calc-card" style="margin-bottom: 28px;">
+        <div class="tz" id="tz-app">
+          <div style="text-align: center; padding: 20px; color: var(--text-muted);">
+            Lade Zeitzonen-Konsole...
+          </div>
+        </div>
+      </section>
+
+      <!-- Trading Sessions & Overlaps -->
+      <section class="calc-card">
+        <h2 class="section-title">Globale Handelszeiten & Marktüberlappungen</h2>
+        <p class="section-desc">Die lukrativsten Marktbewegungen von SONIC AI finden während der Überschneidungszeiten der London- und New York-Sessions statt.</p>
+        
+        <div class="kpi-grid" style="margin-top: 24px;">
+          <div class="kpi-card">
+            <span class="kpi-label">London Session</span>
+            <div class="kpi-val">09:00 – 18:00</div>
+            <div class="kpi-sub">MEZ (UTC+1) · Hauptvolumen Forex</div>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">New York Session</span>
+            <div class="kpi-val">14:00 – 23:00</div>
+            <div class="kpi-sub">MEZ (UTC+1) · Hohe Volatilität XAUUSD</div>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Peak Overlap</span>
+            <div class="kpi-val highlight">14:00 – 18:00</div>
+            <div class="kpi-sub">London + New York gemeinsam aktiv</div>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Täglicher Reinvest-Cutoff</span>
+            <div class="kpi-val">00:00 Uhr</div>
+            <div class="kpi-sub">Mitternacht UTC zur Zinseszins-Optimierung</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Legal Disclaimer -->
+    <div class="disclaimer-text">
+      <strong data-i18n>Risikohinweis:</strong> <span data-i18n>Der Handel mit gehebelten Finanzprodukten und CFDs birgt erhebliche Risiken und kann zum Totalverlust des eingesetzten Kapitals führen. Die hier dargestellten Modellrechnungen, Zinseszins-Simulationen und Vergangenheitsdaten (abgerufen via Myfxbook) stellen keine Anlageberatung und kein Versprechen für künftige Gewinne dar. Handeln Sie nur mit Kapital, dessen Verlust Sie sich leisten können.</span>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <div>© 2026 8bj Consulting LLC · Alle Rechte vorbehalten.</div>
+      <div class="footer-links">
+        <a href="/privacy.html">Datenschutz</a>
+        <a href="/imprint.html">Impressum</a>
+        <a href="/disclaimer.html">Haftungsausschluss</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="/assets/i18n.js?v=15"></script>
+  <script src="/assets/zones.js"></script>
+  <script src="/js/calculator.js?v=15"></script>
+  <script src="/js/chart.js?v=15"></script>
+  <script src="/js/app.js?v=15"></script>
+</body>
+</html>
